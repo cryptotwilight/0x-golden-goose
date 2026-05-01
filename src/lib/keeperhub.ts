@@ -9,7 +9,7 @@
 //
 // Prize track: KeeperHub -- Best Use of KeeperHub ($4,500)
 //
-// Docs: https://docs.keeperhub.com
+// Docs: https://app.keeperhub.com
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { config } from '../config/index.js';

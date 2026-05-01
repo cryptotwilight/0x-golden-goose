@@ -2,6 +2,11 @@
 // KeeperHub Setup Script
 // Run once to register 0x Golden Goose's automation workflows on KeeperHub.
 //
+// NOTE: KeeperHub's API key only supports read access (GET /api/workflows).
+// Workflow creation must be done manually via https://app.keeperhub.com.
+// This script will attempt programmatic registration and fall back to printing
+// the exact config you need to paste into the web UI.
+//
 // Usage: npm run setup-keeper
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -10,6 +15,35 @@ import { KeeperHubClient } from '../src/lib/keeperhub.js';
 import { config } from '../src/config/index.js';
 
 const CALLBACK_URL = process.env.CALLBACK_URL ?? 'http://localhost:3001/api/trigger';
+
+function printManualSetup(callbackUrl: string) {
+  console.log('\n──────────────────────────────────────────────────────');
+  console.log('  MANUAL SETUP REQUIRED — create these two workflows');
+  console.log('  at https://app.keeperhub.com');
+  console.log('──────────────────────────────────────────────────────\n');
+
+  console.log('  Workflow 1 — Scheduled Scout Poll');
+  console.log('  ┌─────────────────────────────────────────────────┐');
+  console.log(`  │  Name:        0x-golden-goose-scout-poll        │`);
+  console.log(`  │  Trigger:     Schedule — cron: */1 * * * *      │`);
+  console.log(`  │  Action:      HTTP Callback                     │`);
+  console.log(`  │  URL:         ${callbackUrl.padEnd(33)} │`);
+  console.log(`  │  Method:      POST                              │`);
+  console.log(`  │  Body:        {"source":"keeperhub","event":"poll_prices"} │`);
+  console.log('  └─────────────────────────────────────────────────┘\n');
+
+  console.log('  Workflow 2 — Price Deviation Alert');
+  console.log('  ┌─────────────────────────────────────────────────┐');
+  console.log(`  │  Name:        0x-golden-goose-price-alert       │`);
+  console.log(`  │  Trigger:     Price Condition                   │`);
+  console.log(`  │  Pair:        ${config.tokenIn}/${config.tokenOut.padEnd(38)} │`);
+  console.log(`  │  Deviation:   ±${String(config.buyThresholdPct + '%').padEnd(38)} │`);
+  console.log(`  │  Direction:   any                               │`);
+  console.log(`  │  Action:      HTTP Callback                     │`);
+  console.log(`  │  URL:         ${callbackUrl.padEnd(33)} │`);
+  console.log(`  │  Body:        {"source":"keeperhub","event":"price_alert"} │`);
+  console.log('  └─────────────────────────────────────────────────┘\n');
+}
 
 async function main() {
   console.log('🔧 Setting up KeeperHub workflows for 0x Golden Goose...\n');
@@ -20,20 +54,18 @@ async function main() {
   }
 
   const keeper = new KeeperHubClient();
-
   console.log(`📡 Callback URL: ${CALLBACK_URL}`);
 
-  // 1. Scheduled polling job (every 1 minute)
-  console.log('\n1. Registering scheduled scout poll (every 1 min)...');
+  // 1. Attempt programmatic registration
+  console.log('\n1. Attempting scheduled scout poll registration...');
   const scheduleId = await keeper.registerScoutJob(CALLBACK_URL, 1);
   if (scheduleId) {
-    console.log(`   [OK] Scheduled job: ${scheduleId}`);
+    console.log(`   [OK] Scheduled job registered: ${scheduleId}`);
   } else {
-    console.log('   [X] Failed to register scheduled job');
+    console.log('   [!] Programmatic registration not available — see manual setup below.');
   }
 
-  // 2. Price condition alert (trigger on ≥ threshold deviation)
-  console.log(`\n2. Registering price alert (${config.tokenIn}/${config.tokenOut} ±${config.buyThresholdPct}%)...`);
+  console.log(`\n2. Attempting price alert registration (${config.tokenIn}/${config.tokenOut} ±${config.buyThresholdPct}%)...`);
   const alertId = await keeper.registerPriceAlert(
     CALLBACK_URL,
     config.tokenIn,
@@ -41,28 +73,29 @@ async function main() {
     config.buyThresholdPct,
   );
   if (alertId) {
-    console.log(`   [OK] Price alert: ${alertId}`);
+    console.log(`   [OK] Price alert registered: ${alertId}`);
   } else {
-    console.log('   [X] Failed to register price alert');
+    console.log('   [!] Programmatic registration not available — see manual setup below.');
   }
 
-  // 3. List all workflows
+  // 2. List existing workflows
   console.log('\n3. Current workflows on KeeperHub:');
   const workflows = await keeper.listWorkflows();
   if (workflows.length === 0) {
-    console.log('   (none)');
+    console.log('   (none yet)');
   } else {
     workflows.forEach((w, i) => {
       console.log(`   ${i + 1}. ${w.name} [${w.id}] -- active: ${w.active}`);
     });
   }
 
-  console.log('\n[OK] KeeperHub setup complete!');
-  console.log('\nNext steps:');
-  console.log('  1. Expose your callback URL publicly (e.g. via ngrok): ngrok http 3001');
-  console.log('  2. Update CALLBACK_URL= in your .env');
-  console.log('  3. Re-run this script to update the webhook URL');
-  console.log('  4. Start 0x Golden Goose: npm run dev');
+  // If nothing was registered, print manual setup instructions
+  if (!scheduleId && !alertId) {
+    printManualSetup(CALLBACK_URL);
+  }
+
+  console.log('\n[OK] Done. Once workflows are active, start the swarm:');
+  console.log('     npm run dev\n');
 }
 
 main().catch((err) => {

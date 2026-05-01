@@ -81,20 +81,24 @@ A free testnet ENS registrar on Sepolia — even with short TTLs — would make 
 
 ## KeeperHub
 
-**TL;DR:** Clean API, great trigger types, one practical friction point.
+**TL;DR:** The MCP integration is excellent once you find it. The REST API story is a mess.
 
 **What worked:**
-- The REST API is well-designed. Workflow CRUD is intuitive, the response shapes are consistent, and Bearer token auth is trivial to set up.
-- The `price_condition` trigger type is exactly what a trading bot needs. Having the infrastructure handle "fire when ETH/USDC moves 2%" is a strong primitive.
+- **The MCP integration is genuinely excellent.** `claude mcp add --transport http keeperhub https://app.keeperhub.com/mcp` — one command and you have full workflow CRUD, execution, template search, and AI-assisted workflow generation available as native tools. Creating two live workflows took under a minute once connected.
+- `ai_generate_workflow` produces correct node/edge definitions from a natural language prompt on the first try. That's a great DX.
+- The `price_condition` trigger type is exactly what a trading bot needs.
 - Scheduled cron triggers work as expected.
 
 **What didn't:**
-- **The callback URL must be publicly reachable.** For local development this means setting up ngrok or a similar tunnel every time, which adds friction and breaks on machine restarts. During a hackathon where developers are iterating fast, this slows things down noticeably.
-- **No dry-run or sandbox mode.** There's no way to verify a workflow registration is correct without having a live, publicly reachable endpoint. A test-trigger that fires against localhost (or a built-in echo endpoint) would make iteration much faster.
-- **No feedback when the callback fails.** If the callback URL returns an error or is unreachable, there's no visibility into that in the dashboard or API. Better failure logging would help diagnose integration issues.
+- **The documented API URL does not exist.** `api.keeperhub.com` doesn't resolve via DNS — NXDOMAIN. The actual API is at `app.keeperhub.com/api` with no `/v1/` prefix. Not documented anywhere. We found it by probing URLs manually. Significant onboarding blocker.
+- **The API key is read-only.** `GET /api/workflows` works fine. `POST /api/workflows` returns 405. `POST /api/workflows/create` returns 401. There is no documented way to create workflows programmatically — it appears you can only do this via the web UI. For a hackathon integration track, a write-capable API key is table stakes.
+- **The KeeperHub dashboard showed "Partially Degraded Service"** during the hackathon window — worth surfacing proactively to participants.
+- **Callback URL must be publicly reachable**, requiring ngrok or similar for local dev. Breaks on machine restarts.
+- **No dry-run or sandbox mode.** Can't verify workflow config without a live endpoint.
+- **No feedback when a callback fails.** Silent failures make debugging painful.
 
 **Ask of the KeeperHub team:**
-Add a sandbox mode or a local tunnel integration (even a recommended ngrok setup in the docs). Surface callback failure logs in the workflow dashboard. A `/test` endpoint that fires a workflow immediately against a given URL without requiring it to be publicly registered would be very useful during development.
+**Lead with the MCP.** The REST API story is broken (wrong DNS, read-only keys, undocumented paths) but the MCP is great — make that the primary integration path in your docs and ETHGlobal prize page. Fix the DNS for `api.keeperhub.com` or document the real URL for developers who go the REST route. Add a sandbox mode for testing triggers locally.
 
 ---
 

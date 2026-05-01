@@ -23,12 +23,20 @@ import { config } from './config/index.js';
 function printBanner() {
   console.clear();
   console.log(chalk.cyan.bold(`
-  ████████╗██████╗  █████╗ ██████╗ ███████╗     ██████╗██╗      █████╗ ██╗    ██╗
-     ██╔══╝██╔══██╗██╔══██╗██╔══██╗██╔════╝    ██╔════╝██║     ██╔══██╗██║    ██║
-     ██║   ██████╔╝███████║██║  ██║█████╗      ██║     ██║     ███████║██║ █╗ ██║
-     ██║   ██╔══██╗██╔══██║██║  ██║██╔══╝      ██║     ██║     ██╔══██║██║███╗██║
-     ██║   ██║  ██║██║  ██║██████╔╝███████╗    ╚██████╗███████╗██║  ██║╚███╔███╔╝
-     ╚═╝   ╚═╝  ╚═╝╚═╝  ╚═╝╚═════╝ ╚══════╝    ╚═════╝╚══════╝╚═╝  ╚═╝ ╚══╝╚══╝
+    ██████╗  ██╗  ██╗    ██████╗   ██████╗  ██╗      ██████╗  ███████╗ ███╗   ██╗
+    ██╔══██╗ ╚██╗██╔╝   ██╔════╝  ██╔═══██╗ ██║      ██╔══██╗ ██╔════╝ ████╗  ██║
+    ██║  ██║  ╚███╔╝    ██║  ███╗ ██║   ██║ ██║      ██║  ██║ █████╗   ██╔██╗ ██║
+    ██║  ██║  ██╔██╗    ██║   ██║ ██║   ██║ ██║      ██║  ██║ ██╔══╝   ██║╚██╗██║
+    ╚█████╔╝ ██╔╝ ██╗   ╚██████╔╝ ╚██████╔╝ ███████╗ ██████╔╝ ███████╗ ██║ ╚████║
+     ╚════╝  ╚═╝  ╚═╝    ╚═════╝   ╚═════╝  ╚══════╝ ╚═════╝  ╚══════╝ ╚═╝  ╚═══╝
+  `));
+  console.log(chalk.yellow.bold(`
+    ██████╗   ██████╗   ██████╗  ███████╗ ███████╗
+   ██╔════╝  ██╔═══██╗ ██╔═══██╗ ██╔════╝ ██╔════╝
+   ██║  ███╗ ██║   ██║ ██║   ██║ ███████╗ █████╗
+   ██║   ██║ ██║   ██║ ██║   ██║ ╚════██║ ██╔══╝
+   ╚██████╔╝ ╚██████╔╝ ╚██████╔╝ ███████║ ███████╗
+    ╚═════╝   ╚═════╝   ╚═════╝  ╚══════╝ ╚══════╝
   `));
   console.log(chalk.gray('  AI-Powered Multi-Agent DEX Trading Swarm | ETHGlobal OpenAgents\n'));
   console.log(chalk.gray(`  Pair: ${chalk.white(config.tokenIn + '/' + config.tokenOut)} | Pool fee: ${chalk.white(config.poolFee / 10000 + '%')} | Poll: ${chalk.white(config.scoutPollMs / 1000 + 's')}\n`));
@@ -59,7 +67,7 @@ function renderDashboard(
   };
 
   // Move cursor to top (after banner) -- use ANSI codes for live update
-  process.stdout.write('\x1B[12;0H');
+  process.stdout.write('\x1B[20;0H');
 
   const line = (label: string, value: string) =>
     `  ${chalk.gray(label.padEnd(22))} ${value}`;
@@ -148,10 +156,11 @@ async function main() {
   await Promise.all([scout.init(), risk.init(), executor.init()]);
 
   // Register KeeperHub workflows (schedule + price alert)
+  // Registration runs silently -- errors go to stderr to avoid polluting the dashboard
   const callbackServer = startCallbackServer(scout);
   if (config.keeperHubApiKey) {
     const callbackUrl = `http://localhost:${callbackServer.port}/api/trigger`;
-    await Promise.all([
+    Promise.all([
       keeper.registerScoutJob(callbackUrl, 1),
       keeper.registerPriceAlert(
         callbackUrl,
@@ -159,9 +168,7 @@ async function main() {
         config.tokenOut,
         config.buyThresholdPct,
       ),
-    ]);
-  } else {
-    console.log(chalk.yellow('  [KeeperHub] No API key -- set KEEPERHUB_API_KEY to register workflows'));
+    ]).catch((err) => process.stderr.write(`[KeeperHub] Registration error: ${err}\n`));
   }
 
   // Start all agents

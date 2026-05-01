@@ -110,13 +110,33 @@ The live dashboard boots immediately and shows all three agents. In simulate mod
 
 ### 4. Set up KeeperHub automation (optional)
 
-```bash
-# Expose your callback URL publicly first
-npx ngrok http 3001
+The recommended path is via the KeeperHub MCP plugin — it gives you full workflow CRUD as native AI tools and actually works, unlike the REST API (see [FEEDBACK.md](./FEEDBACK.md)).
 
-# Then register the keeper jobs
-CALLBACK_URL=https://your-ngrok-url.ngrok.io/api/trigger npm run setup-keeper
+**Add the MCP:**
+```bash
+claude mcp add --transport http keeperhub https://app.keeperhub.com/mcp
 ```
+
+Then expose port 3001 publicly and ask Claude to create the two workflows:
+
+```bash
+npx ngrok http 3001
+```
+
+> Create a KeeperHub workflow that fires every minute and POSTs to `https://your-ngrok-url/api/trigger` with body `{"source":"keeperhub","event":"poll_prices"}`. Also create a price alert workflow for WETH/USDC ±1.5% posting to the same URL.
+
+**Alternative — setup script** (attempts REST, prints manual config if it fails):
+
+```bash
+# Linux/macOS
+CALLBACK_URL=https://your-ngrok-url.ngrok-free.app/api/trigger npm run setup-keeper
+
+# Windows PowerShell
+$env:CALLBACK_URL = "https://your-ngrok-url.ngrok-free.app/api/trigger"
+npm run setup-keeper
+```
+
+Two workflows are needed: a **scheduled poll** (cron `* * * * *`) and a **price alert** (±1.5% WETH/USDC). Both POST to `/api/trigger` on your ngrok URL.
 
 ---
 
@@ -177,7 +197,8 @@ Each agent writes JSON state snapshots and event logs to the 0G decentralized st
 | `SEPOLIA_RPC_URL` | ankr | For trade execution |
 | `OG_INDEXER_URL` | 0G testnet | 0G storage indexer |
 | `AXL_API_URL` | localhost:9002 | Gensyn AXL node |
-| `KEEPERHUB_API_KEY` | — | KeeperHub automation |
+| `KEEPERHUB_API_KEY` | — | KeeperHub automation key |
+| `KEEPERHUB_API_URL` | app.keeperhub.com/api | KeeperHub REST API base URL |
 | `TOKEN_IN` | WETH | Input token symbol |
 | `TOKEN_OUT` | USDC | Output token symbol |
 | `BUY_THRESHOLD_PCT` | 1.5 | % drop to trigger BUY |
@@ -193,7 +214,7 @@ Each agent writes JSON state snapshots and event logs to the 0G decentralized st
 - **viem** — Ethereum/ENS interaction
 - **@0glabs/0g-ts-sdk** — decentralized agent state storage
 - **Gensyn AXL** — P2P encrypted inter-agent messaging
-- **KeeperHub** — automation and scheduling layer
+- **KeeperHub** — automation and scheduling layer (integrated via MCP at `https://app.keeperhub.com/mcp`)
 - **Uniswap v3** — QuoterV2 (prices) + SwapRouter02 (execution)
 - **ENS** — agent identity and address resolution
 

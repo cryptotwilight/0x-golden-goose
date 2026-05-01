@@ -18,7 +18,7 @@ export const config = {
   ogRpcUrl:          opt('OG_RPC_URL', 'https://evmrpc-testnet.0g.ai'),
   axlApiUrl:         opt('AXL_API_URL', 'http://127.0.0.1:9002'),
   keeperHubApiKey:   key('KEEPERHUB_API_KEY'),
-  keeperHubApiUrl:   opt('KEEPERHUB_API_URL', 'https://api.keeperhub.com'),
+  keeperHubApiUrl:   opt('KEEPERHUB_API_URL', 'https://app.keeperhub.com/api'),
   ensScoutName:      opt('ENS_SCOUT_NAME', 'scout.0xgoldengoose.eth'),
   ensRiskName:       opt('ENS_RISK_NAME', 'risk.0xgoldengoose.eth'),
   ensExecutorName:   opt('ENS_EXECUTOR_NAME', 'executor.0xgoldengoose.eth'),
