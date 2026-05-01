@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// Trade Claw -- Entry Point & Live Dashboard
+// 0x Golden Goose -- Entry Point & Live Dashboard
 //
 // Boots all three agents, wires up KeeperHub, and renders a live terminal
 // dashboard showing the swarm status in real time.

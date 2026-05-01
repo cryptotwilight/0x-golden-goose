@@ -1,7 +1,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Base Agent
 //
-// All Trade Claw agents extend BaseAgent. Provides:
+// All 0x Golden Goose agents extend BaseAgent. Provides:
 //   - AXL message bus (Gensyn)
 //   - 0G state persistence
 //   - ENS identity

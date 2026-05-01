@@ -1,8 +1,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // ENS Integration
 //
-// Gives each Trade Claw agent a human-readable onchain identity via ENS.
-// Agents are identified by names like scout.tradeclaw.eth, and token targets
+// Gives each 0x Golden Goose agent a human-readable onchain identity via ENS.
+// Agents are identified by names like scout.0xgoldengoose.eth, and token targets
 // can be looked up by ENS name instead of raw address.
 //
 // Prize track: ENS -- Best ENS Integration for AI Agents ($2,500)
@@ -69,7 +69,7 @@ export function agentEnsName(role: AgentRole): string {
   }
 }
 
-// ── Resolve a token by ENS (e.g. "weth.tradeclaw.eth" → address) ─────────────
+// ── Resolve a token by ENS (e.g. "weth.0xgoldengoose.eth" → address) ──────────
 export async function resolveTokenByEns(nameOrAddress: string): Promise<`0x${string}` | null> {
   if (nameOrAddress.startsWith('0x')) return nameOrAddress as `0x${string}`;
   return resolveEns(nameOrAddress);

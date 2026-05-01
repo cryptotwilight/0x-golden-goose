@@ -1,8 +1,8 @@
-# 🦀 Trade Claw
+# 🪿 0x Golden Goose
 
 > AI-powered multi-agent DEX trading swarm built for ETHGlobal OpenAgents
 
-Trade Claw is an autonomous trading system made of three specialized AI agents that coordinate with each other to monitor, evaluate, and execute trades on Uniswap v3 — without any central server or single point of failure.
+0x Golden Goose is an autonomous trading system made of three specialized AI agents that coordinate with each other to monitor, evaluate, and execute trades on Uniswap v3 — without any central server or single point of failure.
 
 ---
 
@@ -23,7 +23,7 @@ Trade Claw is an autonomous trading system made of three specialized AI agents t
                            │ SIGNAL                        │ DECISION
               ┌────────────▼──────────┐     ┌─────────────▼────────────┐
               │      PriceScout       │     │      RiskManager          │
-              │  scout.tradeclaw.eth  │────▶│  risk.tradeclaw.eth       │
+              │  scout.0xgoldengoose.eth  │────▶│  risk.0xgoldengoose.eth       │
               │                       │     │                           │
               │  • Polls Uniswap v3   │     │  • Confidence gate (≥40%) │
               │  • Rolling avg price  │     │  • Circuit breaker (10%)  │
@@ -34,7 +34,7 @@ Trade Claw is an autonomous trading system made of three specialized AI agents t
                            │ RESULT                       ▼
                            │                ┌─────────────────────────────┐
                            └────────────────│        Executor              │
-                                            │  executor.tradeclaw.eth      │
+                                            │  executor.0xgoldengoose.eth      │
                                             │                              │
                                             │  • Approves token spend      │
                                             │  • Submits swap (Sepolia)    │
@@ -55,7 +55,7 @@ Trade Claw is an autonomous trading system made of three specialized AI agents t
 
   ┌──────────────────────────────────────────────────────────────────────────┐
   │                          ENS Identity Layer                              │
-  │  scout.tradeclaw.eth · risk.tradeclaw.eth · executor.tradeclaw.eth       │
+  │  scout.0xgoldengoose.eth · risk.0xgoldengoose.eth · executor.0xgoldengoose.eth       │
   │  Agents are identified by human-readable ENS names, not raw addresses   │
   └──────────────────────────────────────────────────────────────────────────┘
 ```
@@ -64,7 +64,7 @@ Trade Claw is an autonomous trading system made of three specialized AI agents t
 
 ## Prize Tracks
 
-| Sponsor | Prize | How Trade Claw qualifies |
+| Sponsor | Prize | How 0x Golden Goose qualifies |
 |---|---|---|
 | **0G Labs** | Best Agent Framework ($7,500) | Multi-agent framework built on 0G — state, coordination, swarm architecture |
 | **0G Labs** | Best Autonomous Agents/Swarms ($7,500) | Three autonomous agents in a swarm — PriceScout → RiskManager → Executor |
@@ -81,8 +81,8 @@ Trade Claw is an autonomous trading system made of three specialized AI agents t
 ### 1. Install
 
 ```bash
-git clone https://github.com/yourname/trade-claw
-cd trade-claw
+git clone https://github.com/yourname/0x-golden-goose
+cd 0x-golden-goose
 npm install
 cp .env.example .env
 ```
@@ -122,10 +122,10 @@ CALLBACK_URL=https://your-ngrok-url.ngrok.io/api/trigger npm run setup-keeper
 
 ## Agent Roles
 
-**PriceScout** (`scout.tradeclaw.eth`)
+**PriceScout** (`scout.0xgoldengoose.eth`)
 Fetches live WETH/USDC prices from Uniswap v3 on Ethereum mainnet using the QuoterV2 contract. Computes a 5-tick rolling average and emits `BUY` signals when the price drops more than `BUY_THRESHOLD_PCT` below the average, and `SELL` signals when it rises above `SELL_THRESHOLD_PCT`. All signals are forwarded to the RiskManager via Gensyn AXL and logged to 0G storage.
 
-**RiskManager** (`risk.tradeclaw.eth`)
+**RiskManager** (`risk.0xgoldengoose.eth`)
 Receives signals from PriceScout and applies three risk rules before approving:
 - **Confidence gate**: rejects signals with confidence < 40%
 - **Circuit breaker**: rejects moves > 10% (possible flash crash)
@@ -133,7 +133,7 @@ Receives signals from PriceScout and applies three risk rules before approving:
 
 Approved decisions include an adjusted trade size scaled by confidence and a computed risk score (0–10).
 
-**Executor** (`executor.tradeclaw.eth`)
+**Executor** (`executor.0xgoldengoose.eth`)
 Receives approved decisions from RiskManager and either simulates (no key) or executes a real Uniswap v3 swap on Sepolia testnet. Handles ERC20 approval, swap submission, and confirmation. Results are broadcast back and stored on 0G.
 
 ---
@@ -146,7 +146,7 @@ AXL is a P2P encrypted node that gives each agent its own network identity. Agen
 - `GET /recv` — poll for inbound messages
 - Messages are encrypted end-to-end using Yggdrasil
 
-Trade Claw includes a graceful fallback: when AXL isn't running locally, agents communicate via a local EventEmitter (no functionality lost for demos).
+0x Golden Goose includes a graceful fallback: when AXL isn't running locally, agents communicate via a local EventEmitter (no functionality lost for demos).
 
 **To run AXL locally:**
 ```bash

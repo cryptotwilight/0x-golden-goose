@@ -2,7 +2,7 @@
 // KeeperHub Integration
 //
 // KeeperHub is the execution and reliability layer for onchain agents.
-// Trade Claw uses KeeperHub to:
+// 0x Golden Goose uses KeeperHub to:
 //   1. Schedule the PriceScout to poll every N minutes automatically
 //   2. Set price-condition triggers (e.g. fire if ETH/USDC deviates >2%)
 //   3. Delegate swap execution to managed infrastructure with auto gas estimation
@@ -71,15 +71,15 @@ export class KeeperHubClient {
     return {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${this.apiKey}`,
-      'X-KeeperHub-Client': 'trade-claw/1.0',
+      'X-KeeperHub-Client': '0x-golden-goose/1.0',
     };
   }
 
   /** Register a scheduled polling job for PriceScout */
   async registerScoutJob(callbackUrl: string, intervalMinutes: number = 1): Promise<string | null> {
     const workflow: KeeperWorkflow = {
-      name: 'trade-claw-scout-poll',
-      description: 'Trade Claw: Trigger PriceScout to poll Uniswap v3 prices',
+      name: '0x-golden-goose-scout-poll',
+      description: '0x Golden Goose: Trigger PriceScout to poll Uniswap v3 prices',
       trigger: {
         type: 'schedule',
         cron: `*/${intervalMinutes} * * * *`,
@@ -87,7 +87,7 @@ export class KeeperHubClient {
       action: {
         type: 'http_callback',
         callbackUrl,
-        callbackHeaders: { 'X-Trade-Claw': 'keeper-trigger' },
+        callbackHeaders: { 'X-0x-Golden-Goose': 'keeper-trigger' },
         callbackBody: { source: 'keeperhub', event: 'poll_prices' },
       },
       active: true,
@@ -103,8 +103,8 @@ export class KeeperHubClient {
     deviationPct: number,
   ): Promise<string | null> {
     const workflow: KeeperWorkflow = {
-      name: 'trade-claw-price-alert',
-      description: `Trade Claw: Alert when ${tokenA}/${tokenB} deviates ${deviationPct}%`,
+      name: '0x-golden-goose-price-alert',
+      description: `0x Golden Goose: Alert when ${tokenA}/${tokenB} deviates ${deviationPct}%`,
       trigger: {
         type: 'price_condition',
         priceCondition: { tokenA, tokenB, deviationPct, direction: 'any' },
@@ -112,7 +112,7 @@ export class KeeperHubClient {
       action: {
         type: 'http_callback',
         callbackUrl,
-        callbackHeaders: { 'X-Trade-Claw': 'price-alert' },
+        callbackHeaders: { 'X-0x-Golden-Goose': 'price-alert' },
         callbackBody: { source: 'keeperhub', event: 'price_alert', tokenA, tokenB, deviationPct },
       },
       active: true,

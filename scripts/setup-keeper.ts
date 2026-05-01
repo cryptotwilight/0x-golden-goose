@@ -1,6 +1,6 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // KeeperHub Setup Script
-// Run once to register Trade Claw's automation workflows on KeeperHub.
+// Run once to register 0x Golden Goose's automation workflows on KeeperHub.
 //
 // Usage: npm run setup-keeper
 // ─────────────────────────────────────────────────────────────────────────────
@@ -12,7 +12,7 @@ import { config } from '../src/config/index.js';
 const CALLBACK_URL = process.env.CALLBACK_URL ?? 'http://localhost:3001/api/trigger';
 
 async function main() {
-  console.log('🔧 Setting up KeeperHub workflows for Trade Claw...\n');
+  console.log('🔧 Setting up KeeperHub workflows for 0x Golden Goose...\n');
 
   if (!config.keeperHubApiKey) {
     console.error('[X] KEEPERHUB_API_KEY not set in .env');
@@ -62,7 +62,7 @@ async function main() {
   console.log('  1. Expose your callback URL publicly (e.g. via ngrok): ngrok http 3001');
   console.log('  2. Update CALLBACK_URL= in your .env');
   console.log('  3. Re-run this script to update the webhook URL');
-  console.log('  4. Start Trade Claw: npm run dev');
+  console.log('  4. Start 0x Golden Goose: npm run dev');
 }
 
 main().catch((err) => {

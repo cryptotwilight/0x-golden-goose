@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// Trade Claw -- Shared Types
+// 0x Golden Goose -- Shared Types
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type AgentRole = 'scout' | 'risk-manager' | 'executor';

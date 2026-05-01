@@ -1,5 +1,5 @@
 {
-  "name": "trade-claw",
+  "name": "0x-golden-goose",
   "version": "1.0.0",
   "description": "AI-powered multi-agent DEX trading swarm — ETHGlobal OpenAgents",
   "type": "module",
@@ -11,12 +11,22 @@
     "setup-keeper": "tsx scripts/setup-keeper.ts",
     "clean": "rm -rf dist"
   },
-  "keywords": ["defi", "uniswap", "trading-bot", "ai-agents", "0g", "ens", "keeperhub", "gensyn"],
+  "keywords": [
+    "defi",
+    "uniswap",
+    "trading-bot",
+    "ai-agents",
+    "0g",
+    "ens",
+    "keeperhub",
+    "gensyn"
+  ],
   "dependencies": {
     "@0glabs/0g-ts-sdk": "^0.3.1",
     "chalk": "^5.3.0",
     "dotenv": "^16.4.5",
     "ethers": "6.13.1",
+    "make": "^0.8.1",
     "viem": "^2.21.19"
   },
   "devDependencies": {
