@@ -128,7 +128,7 @@ export class KeeperHubClient {
     }
 
     try {
-      const res = await fetch(`${this.apiUrl}/v1/workflows`, {
+      const res = await fetch(`${this.apiUrl}/workflows`, {
         method: 'POST',
         headers: this.headers,
         body: JSON.stringify(workflow),
@@ -154,7 +154,7 @@ export class KeeperHubClient {
   async listWorkflows(): Promise<KeeperWorkflow[]> {
     if (!this.apiKey) return [];
     try {
-      const res = await fetch(`${this.apiUrl}/v1/workflows`, {
+      const res = await fetch(`${this.apiUrl}/workflows`, {
         headers: this.headers,
         signal: AbortSignal.timeout(5000),
       });
@@ -171,7 +171,7 @@ export class KeeperHubClient {
   async triggerWorkflow(workflowId: string): Promise<boolean> {
     if (!this.apiKey) return false;
     try {
-      const res = await fetch(`${this.apiUrl}/v1/workflows/${workflowId}/trigger`, {
+      const res = await fetch(`${this.apiUrl}/workflows/${workflowId}/trigger`, {
         method: 'POST',
         headers: this.headers,
         signal: AbortSignal.timeout(5000),
@@ -186,7 +186,7 @@ export class KeeperHubClient {
   async deleteWorkflow(workflowId: string): Promise<boolean> {
     if (!this.apiKey) return false;
     try {
-      const res = await fetch(`${this.apiUrl}/v1/workflows/${workflowId}`, {
+      const res = await fetch(`${this.apiUrl}/workflows/${workflowId}`, {
         method: 'DELETE',
         headers: this.headers,
         signal: AbortSignal.timeout(5000),
