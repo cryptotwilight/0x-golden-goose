@@ -24,6 +24,8 @@ export class PriceScout extends BaseAgent {
   public latestChangePct: number = 0;
   public latestDirection: SignalDirection = 'HOLD';
   public tickWindowSize: number = 5;
+  public buyThresholdPct: number = config.buyThresholdPct;
+  public sellThresholdPct: number = config.sellThresholdPct;
   public lastActionAt: number = 0;
   public lastBlockNumber: number = 0;
 
@@ -120,12 +122,12 @@ export class PriceScout extends BaseAgent {
     let direction: SignalDirection = 'HOLD';
     let confidence = 0;
 
-    if (changePct <= -config.buyThresholdPct) {
+    if (changePct <= -this.buyThresholdPct) {
       direction = 'BUY';
-      confidence = Math.min(1, Math.abs(changePct) / (config.buyThresholdPct * 3));
-    } else if (changePct >= config.sellThresholdPct) {
+      confidence = Math.min(1, Math.abs(changePct) / (this.buyThresholdPct * 3));
+    } else if (changePct >= this.sellThresholdPct) {
       direction = 'SELL';
-      confidence = Math.min(1, changePct / (config.sellThresholdPct * 3));
+      confidence = Math.min(1, changePct / (this.sellThresholdPct * 3));
     } else {
       this.latestDirection = 'HOLD';
       return null;
@@ -157,6 +159,10 @@ export class PriceScout extends BaseAgent {
       uptime: this.uptimeSecs,
       ticks: this.priceTicks.length,
       totalSignals: this.totalSignals,
+      recentPrices: this.priceTicks.slice(-60).map((t) => ({ price: t.price, timestamp: t.timestamp })),
+      buyThresholdPct: this.buyThresholdPct,
+      sellThresholdPct: this.sellThresholdPct,
+      scoutPollMs: config.scoutPollMs,
       latestPrice: this.latestPrice,
       latestChangePct: this.latestChangePct,
       latestDirection: this.latestDirection,

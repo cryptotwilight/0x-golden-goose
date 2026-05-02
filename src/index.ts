@@ -165,8 +165,19 @@ function startCallbackServer(scout: PriceScout, risk: RiskManager, executor: Exe
           if (typeof data.tickWindowSize === 'number') {
             scout.tickWindowSize = data.tickWindowSize;
           }
+          if (typeof data.buyThresholdPct === 'number' && Number.isFinite(data.buyThresholdPct) && data.buyThresholdPct > 0) {
+            scout.buyThresholdPct = data.buyThresholdPct;
+          }
+          if (typeof data.sellThresholdPct === 'number' && Number.isFinite(data.sellThresholdPct) && data.sellThresholdPct > 0) {
+            scout.sellThresholdPct = data.sellThresholdPct;
+          }
           res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ ok: true, tickWindowSize: scout.tickWindowSize }));
+          res.end(JSON.stringify({
+            ok: true,
+            tickWindowSize: scout.tickWindowSize,
+            buyThresholdPct: scout.buyThresholdPct,
+            sellThresholdPct: scout.sellThresholdPct,
+          }));
         } catch (e) {
           res.writeHead(400);
           res.end(JSON.stringify({ error: 'invalid json' }));

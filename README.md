@@ -220,7 +220,7 @@ Receives approved decisions from RiskManager and either simulates (no key) or ex
 
 ---
 
-## [GPT-5.2] Gensyn AXL setup (optional but recommended)
+## [GPT-5.2] Gensyn AXL setup 
 
 AXL is a P2P encrypted node that gives each agent its own network identity. Agents send messages to each other using their peer IDs via:
 
@@ -246,7 +246,7 @@ AXL_API_URL=http://127.0.0.1:9002
 
 ---
 
-## [GPT-5.2] 0G persistence (optional)
+## [GPT-5.2] 0G persistence
 
 Each agent writes JSON state snapshots and event logs to the 0G decentralized storage network via the `@0glabs/0g-ts-sdk`. Files are content-addressed by their merkle root hash, creating an immutable audit trail.
 

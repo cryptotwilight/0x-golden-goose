@@ -26,6 +26,14 @@ export default function App() {
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [tickWindow, setTickWindow] = useState<number>(5);
   const [isUpdatingTick, setIsUpdatingTick] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [buyThresholdPct, setBuyThresholdPct] = useState<number>(1.5);
+  const [sellThresholdPct, setSellThresholdPct] = useState<number>(1.5);
+
+  // Tick-window recommender
+  const [targetMoveCents, setTargetMoveCents] = useState<number>(10); // $0.10 default
+  const [recommendedTickWindow, setRecommendedTickWindow] = useState<number | null>(null);
+  const [recommendationNote, setRecommendationNote] = useState<string>('');
 
   useEffect(() => {
     const base = normalizeApiBase(apiUrl);
@@ -56,6 +64,12 @@ export default function App() {
         if (json.scout?.tickWindowSize && tickWindow === 5 && !isUpdatingTick) {
           setTickWindow(json.scout.tickWindowSize);
         }
+        if (typeof json.scout?.buyThresholdPct === 'number' && Number.isFinite(json.scout.buyThresholdPct)) {
+          setBuyThresholdPct(json.scout.buyThresholdPct);
+        }
+        if (typeof json.scout?.sellThresholdPct === 'number' && Number.isFinite(json.scout.sellThresholdPct)) {
+          setSellThresholdPct(json.scout.sellThresholdPct);
+        }
       } catch (error) {
         setIsConnected(false);
         setData(null);
@@ -79,10 +93,87 @@ export default function App() {
           'Content-Type': 'application/json',
           'ngrok-skip-browser-warning': 'true'
         },
-        body: JSON.stringify({ tickWindowSize: tickWindow })
+        body: JSON.stringify({
+          tickWindowSize: tickWindow,
+          buyThresholdPct,
+          sellThresholdPct,
+        })
       });
     } catch(e) {}
     setTimeout(() => setIsUpdatingTick(false), 1000);
+  };
+
+  const computeTickRecommendation = () => {
+    const prices: number[] = (data?.scout?.recentPrices ?? [])
+      .map((p: any) => Number(p?.price))
+      .filter((n: number) => Number.isFinite(n) && n > 0);
+
+    const latest = Number(data?.scout?.latestPrice);
+    if (!Number.isFinite(latest) || latest <= 0) {
+      setRecommendedTickWindow(null);
+      setRecommendationNote('No latest price yet.');
+      return;
+    }
+    if (prices.length < 12) {
+      setRecommendedTickWindow(null);
+      setRecommendationNote('Not enough recent ticks yet (need ~12+).');
+      return;
+    }
+
+    const cents = Number(targetMoveCents);
+    if (!Number.isFinite(cents) || cents <= 0) {
+      setRecommendedTickWindow(null);
+      setRecommendationNote('Enter a target move in cents (> 0).');
+      return;
+    }
+
+    const targetAbs = cents / 100; // dollars
+    const targetPct = (targetAbs / latest) * 100;
+
+    const maxW = Math.min(50, Math.max(2, prices.length - 2));
+    let best: number | null = null;
+    let bestScore = -Infinity;
+
+    // Score each window size by "how often deviation >= targetPct" across recent history.
+    for (let w = 2; w <= maxW; w++) {
+      const deviations: number[] = [];
+      for (let i = w; i < prices.length; i++) {
+        const window = prices.slice(i - w, i);
+        const avg = window.reduce((s, x) => s + x, 0) / window.length;
+        if (!Number.isFinite(avg) || avg <= 0) continue;
+        const dev = Math.abs((prices[i] - avg) / avg) * 100;
+        deviations.push(dev);
+      }
+      if (deviations.length < 5) continue;
+
+      const hitRate = deviations.filter((d) => d >= targetPct).length / deviations.length;
+      const meanDev = deviations.reduce((s, d) => s + d, 0) / deviations.length;
+
+      // Prefer windows that hit consistently; meanDev breaks ties.
+      const score = hitRate * 1000 + meanDev;
+      if (score > bestScore) {
+        bestScore = score;
+        best = w;
+      }
+    }
+
+    if (!best) {
+      setRecommendedTickWindow(null);
+      setRecommendationNote('Could not compute a recommendation from current tick history.');
+      return;
+    }
+
+    const buy = Number(data?.scout?.buyThresholdPct);
+    const sell = Number(data?.scout?.sellThresholdPct);
+    const thrNote =
+      Number.isFinite(buy) && Number.isFinite(sell)
+        ? `Current thresholds: BUY ${buy}% / SELL ${sell}%. To trade on ~$${targetAbs.toFixed(2)} moves at ~$${latest.toFixed(2)}, thresholds usually need to be <= ${targetPct.toFixed(4)}%.`
+        : `To trade on ~$${targetAbs.toFixed(2)} moves at ~$${latest.toFixed(2)}, thresholds usually need to be <= ${targetPct.toFixed(4)}%.`;
+
+    setRecommendedTickWindow(best);
+    setRecommendationNote(
+      `Target move: ~$${targetAbs.toFixed(2)} (~${targetPct.toFixed(4)}%). Recommended tick window: ${best}. Any setting below ${best} will be more sensitive. ${thrNote}`
+    );
   };
 
   const formatDelta = (pct: number) => {
@@ -155,35 +246,24 @@ export default function App() {
         </div>
 
         <div className="connection-settings">
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', borderRight: '1px solid rgba(255,255,255,0.1)', paddingRight: '1rem' }}>
-            <Settings size={16} className="text-gray" />
-            <label>Ticks Window</label>
-            <input 
-              type="number" 
-              value={tickWindow} 
-              onChange={(e) => setTickWindow(parseInt(e.target.value) || 0)}
-              style={{ width: '60px', textAlign: 'center' }}
-              min="2"
-              max="50"
-            />
-            <button 
-              onClick={submitTickWindow}
-              style={{ 
-                background: 'rgba(250, 204, 21, 0.2)', 
-                color: '#facc15', 
-                border: '1px solid rgba(250, 204, 21, 0.3)', 
-                padding: '4px 12px', 
-                borderRadius: '6px',
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', paddingLeft: '0.5rem' }}>
+            <button
+              onClick={() => setShowSettings((s) => !s)}
+              title="Open settings"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: '36px',
+                height: '36px',
+                borderRadius: '10px',
+                background: 'rgba(255,255,255,0.04)',
+                border: '1px solid rgba(255,255,255,0.08)',
                 cursor: 'pointer',
-                fontSize: '0.8rem',
-                fontWeight: 600
               }}
             >
-              Update
+              <Settings size={16} className="text-gray" />
             </button>
-          </div>
-          
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', paddingLeft: '0.5rem' }}>
             <Server size={16} className="text-gray" />
             <input 
               type="text" 
@@ -199,6 +279,155 @@ export default function App() {
           </div>
         </div>
       </header>
+
+      {showSettings && (
+        <div
+          style={{
+            marginTop: '1.25rem',
+            background: 'rgba(0,0,0,0.28)',
+            border: '1px solid rgba(255,255,255,0.08)',
+            borderRadius: '16px',
+            padding: '1rem 1.25rem',
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '1rem', flexWrap: 'wrap' }}>
+            <div style={{ minWidth: '280px' }}>
+              <div style={{ fontWeight: 700, marginBottom: '0.25rem' }}>Swarm Settings</div>
+              <div style={{ color: '#94a3b8', fontSize: '0.85rem' }}>
+                Tick window controls the rolling baseline used for signal detection. Smaller windows react faster (more trading).
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+              <div>
+                <div style={{ color: '#94a3b8', fontSize: '0.8rem', marginBottom: '0.25rem' }}>Tick window</div>
+                <input
+                  type="number"
+                  value={tickWindow}
+                  onChange={(e) => setTickWindow(parseInt(e.target.value) || 0)}
+                  min="2"
+                  max="50"
+                  style={{ width: '90px', textAlign: 'center' }}
+                />
+              </div>
+              <button
+                onClick={submitTickWindow}
+                disabled={isUpdatingTick}
+                style={{
+                  background: 'rgba(250, 204, 21, 0.2)',
+                  color: '#facc15',
+                  border: '1px solid rgba(250, 204, 21, 0.3)',
+                  padding: '8px 14px',
+                  borderRadius: '10px',
+                  cursor: 'pointer',
+                  fontSize: '0.85rem',
+                  fontWeight: 700,
+                  opacity: isUpdatingTick ? 0.7 : 1,
+                }}
+              >
+                {isUpdatingTick ? 'Updating…' : 'Update'}
+              </button>
+            </div>
+          </div>
+
+          <div style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+            <div style={{ fontWeight: 700, marginBottom: '0.5rem' }}>Tick setting recommender</div>
+            <div style={{ color: '#94a3b8', fontSize: '0.85rem', marginBottom: '0.75rem' }}>
+              Enter the price move you care about (in cents). We’ll analyze recent ticks and suggest a tick window where any smaller window should be sensitive enough to trade more often.
+            </div>
+            <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-end', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
+              <div>
+                <div style={{ color: '#94a3b8', fontSize: '0.8rem', marginBottom: '0.25rem' }}>BUY threshold (%)</div>
+                <input
+                  type="number"
+                  value={buyThresholdPct}
+                  onChange={(e) => setBuyThresholdPct(parseFloat(e.target.value) || 0)}
+                  min="0"
+                  step="0.0001"
+                  style={{ width: '140px', textAlign: 'center' }}
+                />
+              </div>
+              <div>
+                <div style={{ color: '#94a3b8', fontSize: '0.8rem', marginBottom: '0.25rem' }}>SELL threshold (%)</div>
+                <input
+                  type="number"
+                  value={sellThresholdPct}
+                  onChange={(e) => setSellThresholdPct(parseFloat(e.target.value) || 0)}
+                  min="0"
+                  step="0.0001"
+                  style={{ width: '140px', textAlign: 'center' }}
+                />
+              </div>
+              <div style={{ color: '#94a3b8', fontSize: '0.8rem', marginBottom: '0.1rem' }}>
+                Included when you click <strong>Update</strong> above.
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+              <div>
+                <div style={{ color: '#94a3b8', fontSize: '0.8rem', marginBottom: '0.25rem' }}>Target move (¢)</div>
+                <input
+                  type="number"
+                  value={targetMoveCents}
+                  onChange={(e) => setTargetMoveCents(parseFloat(e.target.value) || 0)}
+                  min="1"
+                  max="500"
+                  style={{ width: '110px', textAlign: 'center' }}
+                />
+              </div>
+              <button
+                onClick={computeTickRecommendation}
+                style={{
+                  background: 'rgba(6,182,212,0.12)',
+                  color: '#06b6d4',
+                  border: '1px solid rgba(6,182,212,0.25)',
+                  padding: '8px 14px',
+                  borderRadius: '10px',
+                  cursor: 'pointer',
+                  fontSize: '0.85rem',
+                  fontWeight: 700,
+                }}
+              >
+                Recommend
+              </button>
+              {recommendedTickWindow != null && (
+                <button
+                  onClick={() => { setTickWindow(recommendedTickWindow); }}
+                  style={{
+                    background: 'rgba(255,255,255,0.04)',
+                    color: '#e2e8f0',
+                    border: '1px solid rgba(255,255,255,0.10)',
+                    padding: '8px 14px',
+                    borderRadius: '10px',
+                    cursor: 'pointer',
+                    fontSize: '0.85rem',
+                    fontWeight: 700,
+                  }}
+                >
+                  Use {recommendedTickWindow}
+                </button>
+              )}
+            </div>
+
+            {(recommendationNote || recommendedTickWindow != null) && (
+              <div
+                style={{
+                  marginTop: '0.75rem',
+                  padding: '0.75rem 1rem',
+                  borderRadius: '12px',
+                  background: 'rgba(0,0,0,0.25)',
+                  border: '1px solid rgba(255,255,255,0.06)',
+                  color: '#cbd5e1',
+                  fontSize: '0.9rem',
+                  lineHeight: 1.5,
+                  wordBreak: 'break-word',
+                }}
+              >
+                {recommendationNote || (recommendedTickWindow != null ? `Recommended tick window: ${recommendedTickWindow}` : '')}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {!data && isConnected && (
         <div style={{ textAlign: 'center', color: '#94a3b8', marginTop: '4rem' }}>
