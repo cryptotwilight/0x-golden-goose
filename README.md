@@ -84,7 +84,7 @@
 
 - **Node.js**: 18+ recommended (Vite + modern TS)
 - **npm**: comes with Node
-- **Optional**
+- **Safe Guarded**
   - **Firebase CLI** for deploy: `npm i -g firebase-tools`
   - **ngrok** for remote access to your local API: `npx ngrok http 3001`
   - **Gensyn AXL node** if you want P2P messaging (otherwise local-bus fallback works)
@@ -106,7 +106,7 @@ Edit `.env`:
 # At minimum, set your RPC URL (no wallet needed for simulate mode)
 MAINNET_RPC_URL=https://eth.llamarpc.com
 
-# Optional: set for live trading on Sepolia
+#  set for live trading on Sepolia
 PRIVATE_KEY=0x...
 KEEPERHUB_API_KEY=kh_...
 ```
@@ -170,7 +170,7 @@ npx ngrok http 3001
 
 > Tip: If you see an ngrok browser warning page, the UI sends `ngrok-skip-browser-warning: true`, but you can also click through once in the browser.
 
-### [GPT-5.2] 6. Set up KeeperHub automation (optional)
+### [GPT-5.2] 6. Set up KeeperHub automation
 
 The recommended path is via the KeeperHub MCP plugin — it gives you full workflow CRUD as native AI tools and actually works, unlike the REST API (see [FEEDBACK.md](./FEEDBACK.md)).
 
