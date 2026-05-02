@@ -9,9 +9,10 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { BaseAgent } from './base-agent.js';
-import { executeSwap, applySlippage, tokenAddress, ERC20_ABI } from '../lib/uniswap.js';
-import { sepoliaClient } from '../lib/uniswap.js';
+import { executeSwap, applySlippage, tokenAddress, ERC20_ABI, sepoliaClient } from '../lib/uniswap.js';
 import { privateKeyToAccount } from 'viem/accounts';
+import { createWalletClient, http, parseAbi } from 'viem';
+import { sepolia } from 'viem/chains';
 import { formatEther } from 'viem';
 import { config, TOKENS } from '../config/index.js';
 import type {
@@ -21,6 +22,16 @@ import type {
   TradeStatus,
 } from '../types/index.js';
 
+const FUND_ABI = parseAbi([
+  'function drawdown(address user, address token, uint256 amount) external',
+  'function returnFunds(address user, address tokenReturned, uint256 amountReturned, address tokenCleared, uint256 amountCleared) external',
+  'function realBalance(address user, address token) view returns (uint256)',
+  'function notionalBalance(address user, address token) view returns (uint256)',
+  'function inflightFunds(address user, address token) view returns (uint256)',
+  'function getTradeLimit(address user, address token) view returns (uint256)',
+  'function getBotWallet(address user) view returns (address)',
+]);
+
 export class Executor extends BaseAgent {
   private pendingDecision: TradeDecision | null = null;
   private totalTrades: number = 0;
@@ -29,10 +40,13 @@ export class Executor extends BaseAgent {
   private liveMode: boolean = false;
   private walletAddress: string = '--';
   private walletBalance: string = '--';
-
+  
   // Dashboard
   public latestResult: TradeResult | null = null;
   public tradeHistory: TradeResult[] = [];
+  public fundMetrics: any = null;
+  public lastActionAt: number = 0;
+  public lastBlockNumber: number = 0;
 
   constructor() {
     super('executor');
@@ -56,18 +70,49 @@ export class Executor extends BaseAgent {
   private async refreshBalance(): Promise<void> {
     try {
       const bal = await sepoliaClient.getBalance({ address: this.walletAddress as `0x${string}` });
+      const ethStr = parseFloat(formatEther(bal)).toFixed(4) + ' ETH';
+      
       const usdcBal = await sepoliaClient.readContract({
         address: TOKENS.sepolia.USDC,
         abi: ERC20_ABI,
         functionName: 'balanceOf',
         args: [this.walletAddress as `0x${string}`],
       }) as bigint;
-      
-      const ethStr = parseFloat(formatEther(bal)).toFixed(4) + ' ETH';
       const usdcStr = (Number(usdcBal) / 1e6).toFixed(2) + ' USDC';
       this.walletBalance = `${ethStr} | ${usdcStr}`;
-    } catch {
+
+      if (config.fundContractAddress) {
+        const fund = config.fundContractAddress as `0x${string}`;
+        const vaultOwner = (config.fundOwnerAddress || this.walletAddress) as `0x${string}`;
+        
+        // Fetch Fund Metrics
+        const tokens = { WETH: TOKENS.sepolia.WETH, USDC: TOKENS.sepolia.USDC };
+        const metrics: any = { address: fund, owner: vaultOwner, tokens: {} };
+        
+        metrics.botWallet = await sepoliaClient.readContract({ address: fund, abi: FUND_ABI, functionName: 'getBotWallet', args: [vaultOwner] });
+
+        for (const [sym, addr] of Object.entries(tokens)) {
+          const real = await sepoliaClient.readContract({ address: fund, abi: FUND_ABI, functionName: 'realBalance', args: [vaultOwner, addr] }) as bigint;
+          const notional = await sepoliaClient.readContract({ address: fund, abi: FUND_ABI, functionName: 'notionalBalance', args: [vaultOwner, addr] }) as bigint;
+          const inflight = await sepoliaClient.readContract({ address: fund, abi: FUND_ABI, functionName: 'inflightFunds', args: [vaultOwner, addr] }) as bigint;
+          const limit = await sepoliaClient.readContract({ address: fund, abi: FUND_ABI, functionName: 'getTradeLimit', args: [vaultOwner, addr] }) as bigint;
+          
+          const divisor = sym === 'USDC' ? 1e6 : 1e18;
+          const harvestable = notional > limit ? notional - limit : 0n;
+
+          metrics.tokens[sym] = {
+            real: Number(real) / divisor,
+            notional: Number(notional) / divisor,
+            inflight: Number(inflight) / divisor,
+            limit: Number(limit) / divisor,
+            harvestable: Number(harvestable) / divisor,
+          };
+        }
+        this.fundMetrics = metrics;
+      }
+    } catch (e) {
       // non-fatal -- balance just shows stale value
+      console.error('[executor] Error fetching balances:', e);
     }
   }
 
@@ -90,6 +135,8 @@ export class Executor extends BaseAgent {
     this.pendingDecision = decision;
     const result = await this.executeTrade(decision);
     this.latestResult = result;
+    this.lastActionAt = Date.now();
+    if (result.blockNumber) this.lastBlockNumber = result.blockNumber;
     this.tradeHistory.push(result);
     if (this.tradeHistory.length > 50) this.tradeHistory.shift();
 
@@ -122,7 +169,6 @@ export class Executor extends BaseAgent {
     if (!this.liveMode) {
       // Simulate: log the swap params without submitting
       console.log(`[executor] [SIMULATE] Would swap ${amountIn} tokenIn → tokenOut on Sepolia`);
-      console.log(`[executor] [SIMULATE] Max slippage: ${decision.maxSlippage}%`);
       this.totalSuccess++;
       const result: TradeResult = {
         ...base,
@@ -130,26 +176,60 @@ export class Executor extends BaseAgent {
         txHash: `0xSIMULATED_${Date.now().toString(16)}` as `0x${string}`,
         amountOut: (amountIn * 3000n) / (10n ** 12n), // fake USDC amount
       };
-      console.log(`[executor] [SIMULATE] [OK] Simulated tx: ${result.txHash}`);
       return result;
     }
 
-    // Live mode: execute on Sepolia
     try {
-      // Use Sepolia token addresses
       const tokenIn  = TOKENS.sepolia.WETH;
       const tokenOut = TOKENS.sepolia.USDC;
+      const fund = config.fundContractAddress as `0x${string}`;
 
-      // Get a fresh quote on Sepolia for minimum output calculation
+      // 1. Drawdown from SwarmFund
+      const rawKey = config.privateKey as string;
+      const hexKey = (rawKey.startsWith('0x') ? rawKey : `0x${rawKey}`) as `0x${string}`;
+      const account = privateKeyToAccount(hexKey);
+      const walletClient = createWalletClient({ account, chain: sepolia, transport: http(config.sepoliaRpc) });
+      const vaultOwner = (config.fundOwnerAddress || account.address) as `0x${string}`;
+
+      if (fund) {
+        console.log(`[executor] Drawing down ${amountIn} from SwarmFund vault of ${vaultOwner}...`);
+        const ddTx = await walletClient.writeContract({
+          address: fund, abi: FUND_ABI, functionName: 'drawdown', args: [vaultOwner, tokenIn, amountIn]
+        });
+        await sepoliaClient.waitForTransactionReceipt({ hash: ddTx });
+      }
+
+      // 2. Swap on Uniswap
       const { getQuote } = await import('../lib/uniswap.js');
       const quote = await getQuote(tokenIn, tokenOut, amountIn, config.poolFee, 'sepolia');
       const amountOutMinimum = applySlippage(quote.amountOut, decision.maxSlippage);
 
       const txHash = await executeSwap(tokenIn, tokenOut, amountIn, amountOutMinimum);
-
-      // Wait for confirmation
       const receipt = await sepoliaClient.waitForTransactionReceipt({ hash: txHash });
       const status: TradeStatus = receipt.status === 'success' ? 'confirmed' : 'failed';
+
+      // 3. Return Funds to SwarmFund
+      let amountOut = 0n;
+      if (status === 'confirmed' && fund) {
+        // Find how much tokenOut we received (balance of tokenOut)
+        amountOut = await sepoliaClient.readContract({
+          address: tokenOut, abi: ERC20_ABI, functionName: 'balanceOf', args: [account.address]
+        }) as bigint;
+
+        console.log(`[executor] Returning ${amountOut} to SwarmFund...`);
+        // Approve SwarmFund to take tokenOut
+        const approveTx = await walletClient.writeContract({
+          address: tokenOut, abi: ERC20_ABI, functionName: 'approve', args: [fund, amountOut]
+        });
+        await sepoliaClient.waitForTransactionReceipt({ hash: approveTx });
+
+        // returnFunds(user, tokenReturned, amountReturned, tokenCleared, amountCleared)
+        const returnTx = await walletClient.writeContract({
+          address: fund, abi: FUND_ABI, functionName: 'returnFunds',
+          args: [vaultOwner, tokenOut, amountOut, tokenIn, amountIn],
+        });
+        await sepoliaClient.waitForTransactionReceipt({ hash: returnTx });
+      }
 
       if (status === 'confirmed') this.totalSuccess++;
       else this.totalFailed++;
@@ -158,7 +238,9 @@ export class Executor extends BaseAgent {
         ...base,
         status,
         txHash,
+        amountOut,
         gasUsed: receipt.gasUsed,
+        blockNumber: receipt.blockNumber ? Number(receipt.blockNumber) : undefined,
       };
       console.log(`[executor] ${status === 'confirmed' ? '[OK]' : '[X]'} Trade ${status}: ${txHash}`);
       return result;
@@ -186,6 +268,9 @@ export class Executor extends BaseAgent {
         : '--',
       latestResult: this.latestResult,
       tradeHistory: this.tradeHistory,
+      fundMetrics: this.fundMetrics,
+      lastActionAt: this.lastActionAt,
+      lastBlockNumber: this.lastBlockNumber,
       messagesReceived: this.messagesReceived,
       axlConnected: this.axl.isAvailable(),
     };

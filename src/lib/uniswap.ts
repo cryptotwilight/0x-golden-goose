@@ -100,7 +100,7 @@ export async function executeSwap(
   const txHash = await walletClient.writeContract({
     address: router, abi: SWAP_ROUTER_ABI, functionName: 'exactInputSingle',
     args: [{ tokenIn, tokenOut, fee, recipient: account.address, amountIn, amountOutMinimum, sqrtPriceLimitX96: 0n }],
-    value: tokenIn === TOKENS.sepolia.WETH ? amountIn : 0n,
+    value: 0n,
   });
   console.log(`[Uniswap] Swap submitted: ${txHash}`);
   return txHash;

@@ -144,7 +144,7 @@ function startCallbackServer(scout: PriceScout, risk: RiskManager, executor: Exe
     // Enable CORS for frontend
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, ngrok-skip-browser-warning');
 
     if (req.method === 'OPTIONS') {
       res.writeHead(204);
@@ -185,8 +185,9 @@ function startCallbackServer(scout: PriceScout, risk: RiskManager, executor: Exe
       res.end();
     }
   });
-  server.listen(port, () => {
-    console.log(chalk.gray(`  API/Callback listening on http://localhost:${port}`));
+  // Bind all interfaces so tunnels (ngrok, etc.) can forward to this process.
+  server.listen(port, '0.0.0.0', () => {
+    console.log(chalk.gray(`  API/Callback listening on http://0.0.0.0:${port} (localhost:${port})`));
   });
   return { port };
 }
@@ -201,12 +202,15 @@ async function main() {
   const executor = new Executor();
   const keeper   = new KeeperHubClient();
 
+  // Start HTTP API immediately so the web UI can poll /api/stats while agents
+  // initialise (RPC / 0G / first quote can be slow or stall without blocking the port).
+  const callbackServer = startCallbackServer(scout, risk, executor);
+
   // Init all agents (connects AXL, inits 0G storage)
   await Promise.all([scout.init(), risk.init(), executor.init()]);
 
   // Register KeeperHub workflows (schedule + price alert)
   // Registration runs silently -- errors go to stderr to avoid polluting the dashboard
-  const callbackServer = startCallbackServer(scout, risk, executor);
   if (config.keeperHubApiKey) {
     const callbackUrl = `http://localhost:${callbackServer.port}/api/trigger`;
     Promise.all([

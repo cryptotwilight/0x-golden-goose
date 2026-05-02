@@ -1,25 +1,65 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { Search, ShieldAlert, Zap, Server, Settings, TrendingUp, TrendingDown, Minus, Activity } from 'lucide-react';
+import { useState, useEffect, useMemo } from 'react';
+import { Search, ShieldAlert, Zap, Server, Settings, TrendingUp, TrendingDown, Minus, Activity, Clock, Blocks } from 'lucide-react';
+import MyVault from './components/MyVault';
+
+function normalizeApiBase(raw: string): string {
+  return raw.trim().replace(/\/+$/, '');
+}
+
+function initialApiBase(): string {
+  const fromEnv =
+    typeof import.meta.env.VITE_API_BASE_URL === 'string' && import.meta.env.VITE_API_BASE_URL.trim();
+  if (fromEnv) return fromEnv;
+  if (import.meta.env.DEV) return 'http://127.0.0.1:3001';
+  // Production build served from this machine (Vite preview, Firebase emulator, etc.)
+  if (typeof window !== 'undefined') {
+    const h = window.location.hostname;
+    if (h === 'localhost' || h === '127.0.0.1') return 'http://127.0.0.1:3001';
+  }
+  return '';
+}
 
 export default function App() {
-  const [apiUrl, setApiUrl] = useState('http://localhost:3001');
+  const [apiUrl, setApiUrl] = useState(initialApiBase);
   const [data, setData] = useState<any>(null);
   const [isConnected, setIsConnected] = useState(false);
+  const [fetchError, setFetchError] = useState<string | null>(null);
   const [tickWindow, setTickWindow] = useState<number>(5);
+  const [isUpdatingTick, setIsUpdatingTick] = useState(false);
 
   useEffect(() => {
+    const base = normalizeApiBase(apiUrl);
+    if (!base) {
+      setData(null);
+      setIsConnected(false);
+      setFetchError('Set the swarm API URL (your machine: ngrok → port 3001, or VITE_API_BASE_URL at build time).');
+      return;
+    }
+
     const fetchData = async () => {
       try {
-        const response = await fetch(`${apiUrl}/api/stats`);
-        if (!response.ok) throw new Error('Network response was not ok');
+        const response = await fetch(`${base}/api/stats`, {
+          headers: { 'ngrok-skip-browser-warning': 'true' }
+        });
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status} ${response.statusText}`);
+        }
+        const ct = response.headers.get('content-type') ?? '';
+        if (!ct.includes('application/json')) {
+          throw new Error('Not JSON (tunnel down, wrong URL, or ngrok interstitial HTML).');
+        }
         const json = await response.json();
         setData(json);
         setIsConnected(true);
-        if (json.scout?.tickWindowSize) {
+        setFetchError(null);
+        // Only set initial tick window if we haven't modified it locally
+        if (json.scout?.tickWindowSize && tickWindow === 5 && !isUpdatingTick) {
           setTickWindow(json.scout.tickWindowSize);
         }
       } catch (error) {
         setIsConnected(false);
+        setData(null);
+        setFetchError(error instanceof Error ? error.message : 'Request failed');
       }
     };
 
@@ -28,18 +68,21 @@ export default function App() {
     return () => clearInterval(interval);
   }, [apiUrl]);
 
-  const updateTickWindow = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const val = parseInt(e.target.value);
-    setTickWindow(val);
-    if (val > 0) {
-      try {
-        await fetch(`${apiUrl}/api/settings`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ tickWindowSize: val })
-        });
-      } catch(e) {}
-    }
+  const submitTickWindow = async () => {
+    const base = normalizeApiBase(apiUrl);
+    if (!base) return;
+    setIsUpdatingTick(true);
+    try {
+      await fetch(`${base}/api/settings`, {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'ngrok-skip-browser-warning': 'true'
+        },
+        body: JSON.stringify({ tickWindowSize: tickWindow })
+      });
+    } catch(e) {}
+    setTimeout(() => setIsUpdatingTick(false), 1000);
   };
 
   const formatDelta = (pct: number) => {
@@ -52,6 +95,15 @@ export default function App() {
     if (pct > 0) return <TrendingUp size={16} className="text-green" />;
     if (pct < 0) return <TrendingDown size={16} className="text-red" />;
     return <Minus size={16} className="text-gray" />;
+  };
+
+  const timeAgo = (ts: number): string => {
+    if (!ts) return 'Never';
+    const secs = Math.floor((Date.now() - ts) / 1000);
+    if (secs < 5) return 'Just now';
+    if (secs < 60) return `${secs}s ago`;
+    if (secs < 3600) return `${Math.floor(secs / 60)}m ${secs % 60}s ago`;
+    return `${Math.floor(secs / 3600)}h ago`;
   };
 
   // Trade History and P&L Logic
@@ -109,11 +161,26 @@ export default function App() {
             <input 
               type="number" 
               value={tickWindow} 
-              onChange={updateTickWindow}
+              onChange={(e) => setTickWindow(parseInt(e.target.value) || 0)}
               style={{ width: '60px', textAlign: 'center' }}
               min="2"
               max="50"
             />
+            <button 
+              onClick={submitTickWindow}
+              style={{ 
+                background: 'rgba(250, 204, 21, 0.2)', 
+                color: '#facc15', 
+                border: '1px solid rgba(250, 204, 21, 0.3)', 
+                padding: '4px 12px', 
+                borderRadius: '6px',
+                cursor: 'pointer',
+                fontSize: '0.8rem',
+                fontWeight: 600
+              }}
+            >
+              Update
+            </button>
           </div>
           
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', paddingLeft: '0.5rem' }}>
@@ -122,8 +189,8 @@ export default function App() {
               type="text" 
               value={apiUrl} 
               onChange={(e) => setApiUrl(e.target.value)}
-              placeholder="http://localhost:3001"
-              style={{ width: '200px' }}
+              placeholder="https://xxxx.ngrok-free.app (no trailing /)"
+              style={{ minWidth: 'min(420px, 55vw)', flex: '1 1 200px', maxWidth: '560px' }}
             />
             <div className={`status-indicator ${isConnected ? 'connected' : 'disconnected'}`}>
               <div className="pulse"></div>
@@ -136,6 +203,60 @@ export default function App() {
       {!data && isConnected && (
         <div style={{ textAlign: 'center', color: '#94a3b8', marginTop: '4rem' }}>
           Loading swarm data...
+        </div>
+      )}
+
+      {!data && !isConnected && (
+        <div
+          style={{
+            marginTop: '3rem',
+            marginLeft: 'auto',
+            marginRight: 'auto',
+            maxWidth: '640px',
+            padding: '1.5rem',
+            borderRadius: '16px',
+            border: '1px solid rgba(255,255,255,0.08)',
+            background: 'rgba(0,0,0,0.35)',
+            color: '#cbd5e1',
+            lineHeight: 1.6,
+          }}
+        >
+          <h2 style={{ margin: '0 0 0.75rem', fontSize: '1.1rem', color: '#f1f5f9' }}>
+            Swarm API is offline
+          </h2>
+          <p style={{ margin: '0 0 1rem' }}>
+            The dashboard only appears after <code style={{ color: '#facc15' }}>/api/stats</code> returns JSON.
+            Firebase Hosting serves the UI only; your swarm process must be running and reachable from this browser.
+          </p>
+          <ul style={{ margin: '0 0 1rem', paddingLeft: '1.25rem' }}>
+            <li>
+              Run the swarm locally: <code style={{ color: '#94a3b8' }}>npm run dev</code> in the repo root (API on port{' '}
+              <strong>3001</strong>).
+            </li>
+            <li>
+              From the internet, tunnel 3001 with ngrok and paste the <strong>https</strong> base URL above (no path, no trailing slash).
+            </li>
+            <li>
+              For a stable production URL, set <code style={{ color: '#94a3b8' }}>VITE_API_BASE_URL</code> when building the UI, then redeploy.
+            </li>
+          </ul>
+          {fetchError && (
+            <p
+              style={{
+                margin: 0,
+                padding: '0.75rem 1rem',
+                borderRadius: '8px',
+                background: 'rgba(244,63,94,0.08)',
+                border: '1px solid rgba(244,63,94,0.25)',
+                color: '#fda4af',
+                fontFamily: 'monospace',
+                fontSize: '0.85rem',
+                wordBreak: 'break-word',
+              }}
+            >
+              {fetchError}
+            </p>
+          )}
         </div>
       )}
 
@@ -167,6 +288,20 @@ export default function App() {
                 <div className="metric-row">
                   <span className="metric-label">Signals Emitted</span>
                   <span className="metric-value">{data.scout.totalSignals}</span>
+                </div>
+                <div className="metric-row">
+                  <span className="metric-label" style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                    <Clock size={12} /> Last Action
+                  </span>
+                  <span className="metric-value text-cyan" style={{ fontSize: '0.8rem' }}>{timeAgo(data.scout.lastActionAt)}</span>
+                </div>
+                <div className="metric-row">
+                  <span className="metric-label" style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                    <Blocks size={12} /> Block
+                  </span>
+                  <span className="metric-value" style={{ fontSize: '0.8rem', fontFamily: 'monospace' }}>
+                    {data.scout.lastBlockNumber ? `#${data.scout.lastBlockNumber.toLocaleString()}` : '--'}
+                  </span>
                 </div>
               </div>
 
@@ -212,6 +347,12 @@ export default function App() {
                   <span className="metric-value">
                     <span className="text-green">{data.risk.totalApproved}</span> / <span className="text-red">{data.risk.totalRejected}</span>
                   </span>
+                </div>
+                <div className="metric-row">
+                  <span className="metric-label" style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                    <Clock size={12} /> Last Action
+                  </span>
+                  <span className="metric-value text-cyan" style={{ fontSize: '0.8rem' }}>{timeAgo(data.risk.lastActionAt)}</span>
                 </div>
               </div>
 
@@ -267,6 +408,20 @@ export default function App() {
                     <span className="text-green">{data.executor.totalSuccess}</span> / <span className="text-red">{data.executor.totalFailed}</span>
                   </span>
                 </div>
+                <div className="metric-row">
+                  <span className="metric-label" style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                    <Clock size={12} /> Last Action
+                  </span>
+                  <span className="metric-value text-cyan" style={{ fontSize: '0.8rem' }}>{timeAgo(data.executor.lastActionAt)}</span>
+                </div>
+                <div className="metric-row">
+                  <span className="metric-label" style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                    <Blocks size={12} /> Block
+                  </span>
+                  <span className="metric-value" style={{ fontSize: '0.8rem', fontFamily: 'monospace' }}>
+                    {data.executor.lastBlockNumber ? `#${data.executor.lastBlockNumber.toLocaleString()}` : '--'}
+                  </span>
+                </div>
               </div>
 
               <div className="highlight-box">
@@ -284,6 +439,9 @@ export default function App() {
             </div>
           </div>
 
+          {/* SwarmFund — My Vault (wallet-connected) */}
+          <MyVault />
+
           {/* P&L and Trade History Section */}
           <div style={{ marginTop: '2rem' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: '1rem' }}>
@@ -292,7 +450,7 @@ export default function App() {
               </h2>
               
               <div style={{ background: 'rgba(0,0,0,0.3)', padding: '0.75rem 1.5rem', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.05)', display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
-                <span className="text-gray" style={{ fontSize: '0.85rem' }}>Rolling Simulated P&L</span>
+                <span className="text-gray" style={{ fontSize: '0.85rem' }}>Rolling P&L</span>
                 <span style={{ fontSize: '1.5rem', fontWeight: 700, color: totalReturnPct >= 0 ? '#10b981' : '#f43f5e' }}>
                   {totalReturnPct >= 0 ? '+' : ''}{totalReturnPct.toFixed(2)}%
                 </span>

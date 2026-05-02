@@ -30,6 +30,8 @@ export const config = {
   sellThresholdPct:  parseFloat(opt('SELL_THRESHOLD_PCT', '1.5')),
   maxSlippagePct:    parseFloat(opt('MAX_SLIPPAGE_PCT', '0.5')),
   scoutPollMs:       parseInt(opt('SCOUT_POLL_MS', '15000')),
+  fundContractAddress: key('FUND_CONTRACT_ADDRESS'),
+  fundOwnerAddress:    opt('FUND_OWNER_ADDRESS', ''),
 } as const;
 
 export const TOKENS = {

@@ -31,6 +31,7 @@ export class RiskManager extends BaseAgent {
 
   // Dashboard stats
   public latestDecision: TradeDecision | null = null;
+  public lastActionAt: number = 0;
 
   constructor() {
     super('risk-manager');
@@ -50,6 +51,7 @@ export class RiskManager extends BaseAgent {
     const decision = this.evaluate(signal);
     this.latestDecision = decision;
     this.totalDecisions++;
+    this.lastActionAt = Date.now();
 
     if (decision.approved) {
       this.totalApproved++;
@@ -136,6 +138,7 @@ export class RiskManager extends BaseAgent {
         ? ((this.totalApproved / this.totalDecisions) * 100).toFixed(0) + '%'
         : '--',
       latestDecision: this.latestDecision,
+      lastActionAt: this.lastActionAt,
       messagesReceived: this.messagesReceived,
       axlConnected: this.axl.isAvailable(),
     };

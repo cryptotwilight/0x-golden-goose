@@ -24,6 +24,8 @@ export class PriceScout extends BaseAgent {
   public latestChangePct: number = 0;
   public latestDirection: SignalDirection = 'HOLD';
   public tickWindowSize: number = 5;
+  public lastActionAt: number = 0;
+  public lastBlockNumber: number = 0;
 
   constructor() {
     super('scout');
@@ -73,6 +75,8 @@ export class PriceScout extends BaseAgent {
       if (this.priceTicks.length > 100) this.priceTicks.shift();
 
       this.latestPrice = tick.price;
+      this.lastActionAt = Date.now();
+      this.lastBlockNumber = tick.blockNumber != null ? Number(tick.blockNumber) : 0;
       console.log(`[scout] ${config.tokenIn}/${config.tokenOut} = $${tick.price.toFixed(2)} (block ${tick.blockNumber})`);
 
       // Detect signal
@@ -157,6 +161,8 @@ export class PriceScout extends BaseAgent {
       latestChangePct: this.latestChangePct,
       latestDirection: this.latestDirection,
       tickWindowSize: this.tickWindowSize,
+      lastActionAt: this.lastActionAt,
+      lastBlockNumber: this.lastBlockNumber,
       messagesSent: this.messagesSent,
       axlConnected: this.axl.isAvailable(),
     };

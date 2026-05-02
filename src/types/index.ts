@@ -65,6 +65,7 @@ export interface TradeResult {
   amountIn: bigint;
   amountOut?: bigint;
   gasUsed?: bigint;
+  blockNumber?: number;
   error?: string;
   timestamp: number;
   executorEns?: string;
