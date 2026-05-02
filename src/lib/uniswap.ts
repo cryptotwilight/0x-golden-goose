@@ -19,9 +19,10 @@ const SWAP_ROUTER_ABI = parseAbi([
   'function exactInputSingle((address tokenIn, address tokenOut, uint24 fee, address recipient, uint256 amountIn, uint256 amountOutMinimum, uint160 sqrtPriceLimitX96)) external payable returns (uint256 amountOut)',
 ]);
 
-const ERC20_ABI = parseAbi([
+export const ERC20_ABI = parseAbi([
   'function approve(address spender, uint256 amount) returns (bool)',
   'function allowance(address owner, address spender) view returns (uint256)',
+  'function balanceOf(address account) view returns (uint256)',
 ]);
 
 export const mainnetClient = createPublicClient({
@@ -78,7 +79,9 @@ export async function executeSwap(
   fee: number = config.poolFee,
 ): Promise<`0x${string}`> {
   if (!config.privateKey) throw new Error('PRIVATE_KEY not configured');
-  const account = privateKeyToAccount(config.privateKey as `0x${string}`);
+  const rawKey = config.privateKey as string;
+  const hexKey = (rawKey.startsWith('0x') ? rawKey : `0x${rawKey}`) as `0x${string}`;
+  const account = privateKeyToAccount(hexKey);
   const walletClient = createWalletClient({ account, chain: sepolia, transport: http(config.sepoliaRpc) });
   const router = UNISWAP.sepolia.swapRouter02;
 

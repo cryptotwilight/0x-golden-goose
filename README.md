@@ -108,6 +108,21 @@ npm run dev
 
 The live dashboard boots immediately and shows all three agents. In simulate mode, no real transactions are sent.
 
+### 4. Run the Web UI (Optional)
+
+0x Golden Goose includes a stunning, premium React Web UI dashboard built with Vite.
+
+1. Open a new terminal and navigate to the `ui` directory:
+   ```bash
+   cd ui
+   npm install
+   npm run dev
+   ```
+2. Open `http://localhost:5173` in your browser.
+3. The UI allows you to configure the backend API URL dynamically, making it perfect for remote hosting (like Firebase) while connecting back to your local agent swarm via an ngrok tunnel.
+
+See the [UI README](./ui/README.md) for full details on deployment.
+
 ### 4. Set up KeeperHub automation (optional)
 
 The recommended path is via the KeeperHub MCP plugin — it gives you full workflow CRUD as native AI tools and actually works, unlike the REST API (see [FEEDBACK.md](./FEEDBACK.md)).

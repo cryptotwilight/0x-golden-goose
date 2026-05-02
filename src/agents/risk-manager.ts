@@ -21,7 +21,7 @@ import type {
 
 const MIN_CONFIDENCE = 0.4;
 const CIRCUIT_BREAKER_PCT = 10; // reject if price moved more than 10%
-const COOLDOWN_MS = 60_000; // 60s between approved trades
+const COOLDOWN_MS = Number(process.env.COOLDOWN_MS ?? 5_000); // default 5s for testing, set to 60000 for prod
 
 export class RiskManager extends BaseAgent {
   private lastApprovedTs: number = 0;
@@ -74,6 +74,8 @@ export class RiskManager extends BaseAgent {
   private evaluate(signal: TradeSignal): TradeDecision {
     const base: Omit<TradeDecision, 'approved' | 'reason' | 'riskScore'> = {
       signalId: signal.id,
+      direction: signal.direction,
+      price: signal.price,
       maxSlippage: config.maxSlippagePct,
       timestamp: Date.now(),
       riskManagerEns: this.ensName,

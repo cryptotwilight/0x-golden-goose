@@ -12,8 +12,8 @@ function key(envKey: string): string {
 
 export const config = {
   privateKey:        key('PRIVATE_KEY'),
-  mainnetRpc:        opt('MAINNET_RPC_URL', 'https://1rpc.io/eth'),
-  sepoliaRpc:        opt('SEPOLIA_RPC_URL', 'https://rpc.ankr.com/eth_sepolia'),
+  mainnetRpc:        opt('MAINNET_RPC_URL', 'https://cloudflare-eth.com'),
+  sepoliaRpc:        opt('SEPOLIA_RPC_URL', 'https://ethereum-sepolia-rpc.publicnode.com'),
   ogIndexerUrl:      opt('OG_INDEXER_URL', 'https://indexer-storage-testnet-turbo.0g.ai'),
   ogRpcUrl:          opt('OG_RPC_URL', 'https://evmrpc-testnet.0g.ai'),
   axlApiUrl:         opt('AXL_API_URL', 'http://127.0.0.1:9002'),

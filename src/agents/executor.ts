@@ -9,8 +9,10 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { BaseAgent } from './base-agent.js';
-import { executeSwap, applySlippage, tokenAddress } from '../lib/uniswap.js';
+import { executeSwap, applySlippage, tokenAddress, ERC20_ABI } from '../lib/uniswap.js';
 import { sepoliaClient } from '../lib/uniswap.js';
+import { privateKeyToAccount } from 'viem/accounts';
+import { formatEther } from 'viem';
 import { config, TOKENS } from '../config/index.js';
 import type {
   AxlMessage,
@@ -25,6 +27,8 @@ export class Executor extends BaseAgent {
   private totalSuccess: number = 0;
   private totalFailed: number = 0;
   private liveMode: boolean = false;
+  private walletAddress: string = '--';
+  private walletBalance: string = '--';
 
   // Dashboard
   public latestResult: TradeResult | null = null;
@@ -37,9 +41,33 @@ export class Executor extends BaseAgent {
   protected async onInit(): Promise<void> {
     this.liveMode = !!config.privateKey;
     if (this.liveMode) {
+      const rawKey = config.privateKey as string;
+      const hexKey = (rawKey.startsWith('0x') ? rawKey : `0x${rawKey}`) as `0x${string}`;
+      const account = privateKeyToAccount(hexKey);
+      this.walletAddress = account.address;
       console.log(`[executor] Live mode -- will submit swaps on Sepolia`);
+      // fetch initial balance
+      await this.refreshBalance();
     } else {
       console.log(`[executor] Simulate mode -- no PRIVATE_KEY set`);
+    }
+  }
+
+  private async refreshBalance(): Promise<void> {
+    try {
+      const bal = await sepoliaClient.getBalance({ address: this.walletAddress as `0x${string}` });
+      const usdcBal = await sepoliaClient.readContract({
+        address: TOKENS.sepolia.USDC,
+        abi: ERC20_ABI,
+        functionName: 'balanceOf',
+        args: [this.walletAddress as `0x${string}`],
+      }) as bigint;
+      
+      const ethStr = parseFloat(formatEther(bal)).toFixed(4) + ' ETH';
+      const usdcStr = (Number(usdcBal) / 1e6).toFixed(2) + ' USDC';
+      this.walletBalance = `${ethStr} | ${usdcStr}`;
+    } catch {
+      // non-fatal -- balance just shows stale value
     }
   }
 
@@ -72,6 +100,9 @@ export class Executor extends BaseAgent {
     });
     await this.storage.appendEvent('RESULT', result);
 
+    // Refresh balance after each trade
+    if (this.liveMode) await this.refreshBalance();
+
     // Broadcast result back (could be picked up by a monitor/dashboard agent)
     await this.send('scout', 'RESULT', result);
   }
@@ -81,6 +112,8 @@ export class Executor extends BaseAgent {
     const amountIn = decision.adjustedAmountIn ?? config.tradeAmountWei;
     const base: Omit<TradeResult, 'status' | 'txHash' | 'amountOut' | 'gasUsed' | 'error'> = {
       signalId: decision.signalId,
+      direction: decision.direction,
+      executionPrice: decision.price,
       amountIn,
       timestamp: Date.now(),
       executorEns: this.ensName,
@@ -143,6 +176,8 @@ export class Executor extends BaseAgent {
       ensName: this.ensName,
       uptime: this.uptimeSecs,
       liveMode: this.liveMode,
+      walletAddress: this.walletAddress,
+      walletBalance: this.walletBalance,
       totalTrades: this.totalTrades,
       totalSuccess: this.totalSuccess,
       totalFailed: this.totalFailed,
@@ -150,6 +185,7 @@ export class Executor extends BaseAgent {
         ? ((this.totalSuccess / this.totalTrades) * 100).toFixed(0) + '%'
         : '--',
       latestResult: this.latestResult,
+      tradeHistory: this.tradeHistory,
       messagesReceived: this.messagesReceived,
       axlConnected: this.axl.isAvailable(),
     };

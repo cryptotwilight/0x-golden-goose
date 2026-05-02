@@ -1,0 +1,288 @@
+:root {
+  --bg-dark: #0a0e17;
+  --panel-bg: rgba(20, 27, 45, 0.6);
+  --panel-border: rgba(255, 255, 255, 0.08);
+  --text-main: #f1f5f9;
+  --text-muted: #94a3b8;
+  
+  --accent-gold: #facc15;
+  --accent-cyan: #06b6d4;
+  --accent-green: #10b981;
+  --accent-red: #f43f5e;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  background-color: var(--bg-dark);
+  color: var(--text-main);
+  line-height: 1.5;
+  min-height: 100vh;
+  overflow-x: hidden;
+  background-image: 
+    radial-gradient(circle at 15% 50%, rgba(6, 182, 212, 0.08) 0%, transparent 50%),
+    radial-gradient(circle at 85% 30%, rgba(250, 204, 21, 0.05) 0%, transparent 50%);
+}
+
+.dashboard-container {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 2rem;
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 2.5rem;
+  padding-bottom: 1.5rem;
+  border-bottom: 1px solid var(--panel-border);
+}
+
+.title-group {
+  display: flex;
+  flex-direction: column;
+}
+
+h1 {
+  font-size: 2rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  background: linear-gradient(90deg, #fff, var(--text-muted));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.subtitle {
+  color: var(--text-muted);
+  font-size: 0.95rem;
+  margin-top: 0.25rem;
+}
+
+.connection-settings {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  background: var(--panel-bg);
+  padding: 0.5rem 1rem;
+  border-radius: 100px;
+  border: 1px solid var(--panel-border);
+  backdrop-filter: blur(10px);
+}
+
+.connection-settings label {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.connection-settings input {
+  background: rgba(0,0,0,0.2);
+  border: 1px solid rgba(255,255,255,0.1);
+  color: var(--text-main);
+  padding: 0.4rem 0.8rem;
+  border-radius: 50px;
+  font-family: monospace;
+  font-size: 0.85rem;
+  width: 250px;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.connection-settings input:focus {
+  border-color: var(--accent-cyan);
+}
+
+.status-indicator {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  padding: 0.3rem 0.8rem;
+  border-radius: 50px;
+}
+
+.status-indicator.connected {
+  background: rgba(16, 185, 129, 0.1);
+  color: var(--accent-green);
+}
+
+.status-indicator.disconnected {
+  background: rgba(244, 63, 94, 0.1);
+  color: var(--accent-red);
+}
+
+.pulse {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: currentColor;
+}
+
+.connected .pulse {
+  animation: pulse-green 2s infinite;
+}
+
+@keyframes pulse-green {
+  0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); }
+  70% { box-shadow: 0 0 0 6px rgba(16, 185, 129, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+}
+
+/* Grid Layout */
+.agents-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+  gap: 1.5rem;
+}
+
+/* Agent Card */
+.agent-card {
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 16px;
+  padding: 1.5rem;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275), box-shadow 0.3s;
+  position: relative;
+  overflow: hidden;
+}
+
+.agent-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 12px 30px rgba(0,0,0,0.2);
+}
+
+.agent-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--card-color), transparent);
+  opacity: 0.5;
+}
+
+.agent-card.scout { --card-color: var(--accent-cyan); }
+.agent-card.risk { --card-color: var(--accent-gold); }
+.agent-card.executor { --card-color: var(--accent-green); }
+
+.card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.card-title {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+.icon-wrapper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  background: rgba(255,255,255,0.05);
+  color: var(--card-color);
+}
+
+.axl-badge {
+  font-size: 0.75rem;
+  padding: 0.2rem 0.6rem;
+  border-radius: 50px;
+  font-weight: 600;
+  border: 1px solid;
+}
+
+.axl-badge.connected {
+  color: var(--accent-green);
+  border-color: rgba(16, 185, 129, 0.3);
+  background: rgba(16, 185, 129, 0.05);
+}
+
+.axl-badge.disconnected {
+  color: var(--accent-gold);
+  border-color: rgba(250, 204, 21, 0.3);
+  background: rgba(250, 204, 21, 0.05);
+}
+
+.ens-name {
+  font-family: monospace;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  margin-top: -0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.metrics-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.metric-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px dashed rgba(255,255,255,0.05);
+}
+
+.metric-row:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.metric-label {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+.metric-value {
+  font-weight: 500;
+  font-family: monospace;
+  font-size: 0.95rem;
+}
+
+/* Colors & Utilities */
+.text-green { color: var(--accent-green); }
+.text-red { color: var(--accent-red); }
+.text-gold { color: var(--accent-gold); }
+.text-cyan { color: var(--accent-cyan); }
+.text-white { color: #fff; }
+.text-gray { color: var(--text-muted); }
+
+.highlight-box {
+  background: rgba(0,0,0,0.3);
+  padding: 0.75rem 1rem;
+  border-radius: 8px;
+  margin-top: 0.5rem;
+  border-left: 3px solid var(--card-color);
+}
+
+.highlight-box .metric-label {
+  font-size: 0.8rem;
+  margin-bottom: 0.25rem;
+}
+
+.highlight-box .metric-value {
+  font-size: 1.1rem;
+}

@@ -44,6 +44,8 @@ export interface TradeSignal {
 // ── Decision from RiskManager ─────────────────────────────────────────────────
 export interface TradeDecision {
   signalId: string;
+  direction: SignalDirection;
+  price: number;
   approved: boolean;
   reason: string;
   adjustedAmountIn?: bigint;
@@ -56,6 +58,8 @@ export interface TradeDecision {
 // ── Execution result from Executor ───────────────────────────────────────────
 export interface TradeResult {
   signalId: string;
+  direction: SignalDirection;
+  executionPrice: number;
   status: TradeStatus;
   txHash?: `0x${string}`;
   amountIn: bigint;

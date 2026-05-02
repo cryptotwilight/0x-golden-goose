@@ -23,6 +23,7 @@ export class PriceScout extends BaseAgent {
   public latestPrice: number = 0;
   public latestChangePct: number = 0;
   public latestDirection: SignalDirection = 'HOLD';
+  public tickWindowSize: number = 5;
 
   constructor() {
     super('scout');
@@ -103,8 +104,9 @@ export class PriceScout extends BaseAgent {
   private evaluateSignal(tick: PriceTick): TradeSignal | null {
     if (this.priceTicks.length < 3) return null;
 
-    // Use a 5-tick rolling average as baseline
-    const window = this.priceTicks.slice(-Math.min(6, this.priceTicks.length) - 1, -1);
+    // Use a configurable tick window rolling average as baseline
+    const windowSize = Math.min(this.tickWindowSize + 1, this.priceTicks.length);
+    const window = this.priceTicks.slice(-windowSize, -1);
     if (window.length < 2) return null;
     const avgPrice = window.reduce((sum, t) => sum + t.price, 0) / window.length;
 
@@ -154,6 +156,7 @@ export class PriceScout extends BaseAgent {
       latestPrice: this.latestPrice,
       latestChangePct: this.latestChangePct,
       latestDirection: this.latestDirection,
+      tickWindowSize: this.tickWindowSize,
       messagesSent: this.messagesSent,
       axlConnected: this.axl.isAvailable(),
     };
