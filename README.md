@@ -4,6 +4,8 @@
 
 0x Golden Goose is an autonomous trading system made of three specialized AI agents that coordinate with each other to monitor, evaluate, and execute trades on Uniswap v3 — without any central server or single point of failure.
 
+**[GPT-5.2] Repo status:** This README was updated to include *all runnable components* (core service, Web UI, Firebase deployment, ngrok, Gensyn AXL, KeeperHub workflows, and 0G persistence) with repeatable, copy/paste instructions.
+
 ---
 
 ## Architecture
@@ -78,7 +80,16 @@
 
 ## Quick Start
 
-### 1. Install
+### [GPT-5.2] 0. Prerequisites (one-time)
+
+- **Node.js**: 18+ recommended (Vite + modern TS)
+- **npm**: comes with Node
+- **Optional**
+  - **Firebase CLI** for deploy: `npm i -g firebase-tools`
+  - **ngrok** for remote access to your local API: `npx ngrok http 3001`
+  - **Gensyn AXL node** if you want P2P messaging (otherwise local-bus fallback works)
+
+### [GPT-5.2] 1. Install
 
 ```bash
 git clone https://github.com/yourname/0x-golden-goose
@@ -87,7 +98,7 @@ npm install
 cp .env.example .env
 ```
 
-### 2. Configure
+### [GPT-5.2] 2. Configure
 
 Edit `.env`:
 
@@ -100,15 +111,30 @@ PRIVATE_KEY=0x...
 KEEPERHUB_API_KEY=kh_...
 ```
 
-### 3. Run
+### [GPT-5.2] 3. Run the core service (agents + HTTP API)
 
 ```bash
 npm run dev
 ```
 
-The live dashboard boots immediately and shows all three agents. In simulate mode, no real transactions are sent.
+The live terminal dashboard boots immediately and shows all three agents. In **simulate mode** (no `PRIVATE_KEY`), no real transactions are sent.
 
-### 4. Run the Web UI (Optional)
+**Core service endpoints (served by the core process):**
+
+- `GET /api/stats` (JSON) — what the Web UI polls
+- `POST /api/settings` (JSON) — update scout tick window size
+- `POST /api/trigger` — KeeperHub callback (triggers a scout tick)
+
+**Local health checks:**
+
+- Browser: `http://127.0.0.1:3001/api/stats`
+- PowerShell:
+
+```powershell
+Invoke-WebRequest -Uri "http://127.0.0.1:3001/api/stats" -UseBasicParsing -TimeoutSec 5
+```
+
+### [GPT-5.2] 4. Run the Web UI locally (recommended for dev)
 
 0x Golden Goose includes a stunning, premium React Web UI dashboard built with Vite.
 
@@ -119,11 +145,32 @@ The live dashboard boots immediately and shows all three agents. In simulate mod
    npm run dev
    ```
 2. Open `http://localhost:5173` in your browser.
-3. The UI allows you to configure the backend API URL dynamically, making it perfect for remote hosting (like Firebase) while connecting back to your local agent swarm via an ngrok tunnel.
+3. The UI defaults to `http://127.0.0.1:3001` when running on localhost. You can also change the API base URL in the header field.
 
 See the [UI README](./ui/README.md) for full details on deployment.
 
-### 4. Set up KeeperHub automation (optional)
+### [GPT-5.2] 5. Connect the hosted Firebase UI to your running core service
+
+The Firebase deployment serves the UI at:
+
+- **Hosted UI**: `https://x-golden-goose.web.app/`
+
+Firebase Hosting serves *only* the static UI. The core agents/API must still be running on your machine (or on a server). To connect the hosted UI to your local core service:
+
+1. Start the core service locally (Step 3) so it listens on `127.0.0.1:3001`.
+2. Expose port **3001**:
+
+```bash
+npx ngrok http 3001
+```
+
+3. Copy the ngrok **https** origin (example: `https://xxxx.ngrok-free.app`) and paste it into the UI’s **API URL** field (no path, no trailing slash).
+4. Verify by opening:
+   - `https://xxxx.ngrok-free.app/api/stats` (should return JSON)
+
+> Tip: If you see an ngrok browser warning page, the UI sends `ngrok-skip-browser-warning: true`, but you can also click through once in the browser.
+
+### [GPT-5.2] 6. Set up KeeperHub automation (optional)
 
 The recommended path is via the KeeperHub MCP plugin — it gives you full workflow CRUD as native AI tools and actually works, unlike the REST API (see [FEEDBACK.md](./FEEDBACK.md)).
 
@@ -132,13 +179,13 @@ The recommended path is via the KeeperHub MCP plugin — it gives you full workf
 claude mcp add --transport http keeperhub https://app.keeperhub.com/mcp
 ```
 
-Then expose port 3001 publicly and ask Claude to create the two workflows:
+Then expose port 3001 publicly and ask Claude to create the workflows:
 
 ```bash
 npx ngrok http 3001
 ```
 
-> Create a KeeperHub workflow that fires every minute and POSTs to `https://your-ngrok-url/api/trigger` with body `{"source":"keeperhub","event":"poll_prices"}`. Also create a price alert workflow for WETH/USDC ±1.5% posting to the same URL.
+> Create a KeeperHub workflow that fires every minute and `POST`s to `https://your-ngrok-url/api/trigger` with body `{"source":"keeperhub","event":"poll_prices"}`. Also create a price alert workflow for WETH/USDC ±1.5% posting to the same URL.
 
 **Alternative — setup script** (attempts REST, prints manual config if it fails):
 
@@ -155,7 +202,7 @@ Two workflows are needed: a **scheduled poll** (cron `* * * * *`) and a **price 
 
 ---
 
-## Agent Roles
+## [GPT-5.2] Agent Roles
 
 **PriceScout** (`scout.0xgoldengoose.eth`)
 Fetches live WETH/USDC prices from Uniswap v3 on Ethereum mainnet using the QuoterV2 contract. Computes a 5-tick rolling average and emits `BUY` signals when the price drops more than `BUY_THRESHOLD_PCT` below the average, and `SELL` signals when it rises above `SELL_THRESHOLD_PCT`. All signals are forwarded to the RiskManager via Gensyn AXL and logged to 0G storage.
@@ -173,7 +220,7 @@ Receives approved decisions from RiskManager and either simulates (no key) or ex
 
 ---
 
-## How Gensyn AXL Works
+## [GPT-5.2] Gensyn AXL setup (optional but recommended)
 
 AXL is a P2P encrypted node that gives each agent its own network identity. Agents send messages to each other using their peer IDs via:
 
@@ -181,7 +228,7 @@ AXL is a P2P encrypted node that gives each agent its own network identity. Agen
 - `GET /recv` — poll for inbound messages
 - Messages are encrypted end-to-end using Yggdrasil
 
-0x Golden Goose includes a graceful fallback: when AXL isn't running locally, agents communicate via a local EventEmitter (no functionality lost for demos).
+0x Golden Goose includes a graceful fallback: when AXL isn't reachable, agents communicate via a **local EventEmitter** (the dashboard shows `● local-bus`). KeeperHub availability does **not** affect this indicator — it is purely about AXL connectivity.
 
 **To run AXL locally:**
 ```bash
@@ -191,9 +238,15 @@ openssl genpkey -algorithm ed25519 -out private.pem
 ./node -config node-config.json
 ```
 
+**Ensure your `.env` points at the node:**
+
+```bash
+AXL_API_URL=http://127.0.0.1:9002
+```
+
 ---
 
-## How 0G Storage Works
+## [GPT-5.2] 0G persistence (optional)
 
 Each agent writes JSON state snapshots and event logs to the 0G decentralized storage network via the `@0glabs/0g-ts-sdk`. Files are content-addressed by their merkle root hash, creating an immutable audit trail.
 
@@ -201,9 +254,14 @@ Each agent writes JSON state snapshots and event logs to the 0G decentralized st
 - RiskManager stores: decision history with reasons and risk scores
 - Executor stores: trade results with tx hashes and gas costs
 
+**Notes:**
+
+- If `@0glabs/0g-ts-sdk` is missing, the agents will run but log that 0G is disabled.
+- Uploads are disabled if `PRIVATE_KEY` is not set (read-only / simulate-friendly).
+
 ---
 
-## Environment Variables
+## [GPT-5.2] Environment Variables
 
 | Variable | Default | Description |
 |---|---|---|
@@ -223,7 +281,7 @@ Each agent writes JSON state snapshots and event logs to the 0G decentralized st
 
 ---
 
-## Tech Stack
+## [GPT-5.2] Tech Stack
 
 - **TypeScript** — full type safety across all agents
 - **viem** — Ethereum/ENS interaction
@@ -236,3 +294,9 @@ Each agent writes JSON state snapshots and event logs to the 0G decentralized st
 ---
 
 Built for [ETHGlobal OpenAgents](https://ethglobal.com/events/openagents) — May 2026
+
+---
+
+## [GPT-5.2] FAQ / troubleshooting
+
+See [`FAQ_README.md`](./FAQ_README.md) for FAQs, common pitfalls (ngrok, Firebase, AXL “local-bus”, wallet extensions), and tips & tricks for smooth demos.
