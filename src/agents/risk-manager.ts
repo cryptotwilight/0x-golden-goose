@@ -44,7 +44,7 @@ export class RiskManager extends BaseAgent {
     console.log(`[risk-manager] Listening for signals on AXL...`);
   }
 
-  protected async onMessage(msg: AxlMessage): Promise<void> {
+  async onMessage(msg: AxlMessage): Promise<void> {
     if (msg.type !== 'SIGNAL') return;
     const signal = msg.payload as TradeSignal;
     console.log(`[risk-manager] Signal received: ${signal.direction} id=${signal.id}`);

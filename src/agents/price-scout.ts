@@ -50,7 +50,7 @@ export class PriceScout extends BaseAgent {
     if (this.pollTimer) clearInterval(this.pollTimer);
   }
 
-  protected async onMessage(msg: AxlMessage): Promise<void> {
+  async onMessage(msg: AxlMessage): Promise<void> {
     // Scout can receive heartbeat pings from KeeperHub (HTTP callback → AXL)
     if (msg.type === 'HEARTBEAT') {
       console.log(`[scout] Heartbeat received from ${msg.from}`);

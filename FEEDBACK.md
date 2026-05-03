@@ -102,4 +102,21 @@ A free testnet ENS registrar on Sepolia — even with short TTLs — would make 
 
 ---
 
+## SwarmFund (Custom Multi-user Vaults)
+
+**TL;DR:** Custom smart contract integration allowed us to pivot from a single-owner bot to a decentralized multi-user vault registry.
+
+**What worked:**
+- **Isolated Vaults**: The mapping-based vault structure ensures complete security between users. Even if the bot is compromised, it can only withdraw up to the `tradeLimit` set by each user.
+- **Wagmi Integration**: Connecting the frontend directly to the contract for deposits and settings management was seamless with wagmi's `useWriteContract`.
+
+**What didn't:**
+- **Drawdown Latency**: On Sepolia, waiting for the `drawdown` transaction to confirm before executing the swap on Uniswap adds ~12-30 seconds of latency. This could be optimized using a "pre-funded" model or a faster L2.
+- **Approval Management**: Requiring users to approve the contract for every deposit is a standard but friction-heavy UX. EIP-2612 permits would be a better choice for future iterations.
+
+**Ask for next version:**
+Move to an L2 like Somnia or Arbitrum to reduce transaction latency and costs, making the "drawdown-then-swap" pattern faster and more efficient.
+
+---
+
 *Feedback submitted by the 0x Golden Goose team — ETHGlobal OpenAgents, May 2026.*

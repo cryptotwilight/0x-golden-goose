@@ -15,14 +15,14 @@ import { config } from '../config/index.js';
 import type { AgentStateSnapshot, AgentRole } from '../types/index.js';
 
 let Indexer: any = null;
-let ZgFile: any = null;
+let MemData: any = null;
 
 async function loadSdk() {
   if (Indexer) return;
   try {
     const sdk = await import('@0glabs/0g-ts-sdk');
     Indexer = sdk.Indexer;
-    ZgFile = sdk.ZgFile;
+    MemData = sdk.MemData;
   } catch {
     console.warn('[0G] SDK not installed -- state storage disabled. Run: npm install');
   }
@@ -61,15 +61,15 @@ export class OgStorageClient {
   }
 
   async storeState(snapshot: AgentStateSnapshot): Promise<string | null> {
-    if (!this.indexer || !ZgFile) return null;
+    if (!this.indexer || !MemData) return null;
     if (!config.privateKey) return null;
 
     try {
       const json = JSON.stringify(snapshot, (_k, v) =>
         typeof v === 'bigint' ? v.toString() : v
       );
-      const buffer = Buffer.from(json, 'utf-8');
-      const file = await ZgFile.fromBuffer(buffer, `${this.role}-state.json`);
+      const data = new Uint8Array(Buffer.from(json, 'utf-8'));
+      const file = new MemData(data);
 
       const [tree, err1] = await file.merkleTree();
       if (err1) throw err1;
@@ -106,7 +106,7 @@ export class OgStorageClient {
   }
 
   async appendEvent(eventType: string, data: unknown): Promise<string | null> {
-    if (!this.indexer || !ZgFile) return null;
+    if (!this.indexer || !MemData) return null;
     if (!config.privateKey) return null;
 
     try {
@@ -119,8 +119,8 @@ export class OgStorageClient {
       const json = JSON.stringify(entry, (_k, v) =>
         typeof v === 'bigint' ? v.toString() : v
       );
-      const buffer = Buffer.from(json, 'utf-8');
-      const file = await ZgFile.fromBuffer(buffer, `${this.role}-event.json`);
+      const buf = new Uint8Array(Buffer.from(json, 'utf-8'));
+      const file = new MemData(buf);
       const [tree, err1] = await file.merkleTree();
       if (err1) throw err1;
       const rootHash: string = tree.rootHash();

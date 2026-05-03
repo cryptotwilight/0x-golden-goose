@@ -23,8 +23,8 @@ export abstract class BaseAgent {
 
   // Stats
   protected startedAt: number = 0;
-  protected messagesSent: number = 0;
-  protected messagesReceived: number = 0;
+  public messagesSent: number = 0;
+  public messagesReceived: number = 0;
 
   constructor(role: AgentRole) {
     this.role = role;
@@ -100,5 +100,5 @@ export abstract class BaseAgent {
   protected abstract onInit(): Promise<void>;
   protected abstract onStart(): Promise<void>;
   protected abstract onStop(): Promise<void>;
-  protected abstract onMessage(msg: AxlMessage): Promise<void>;
+  public abstract onMessage(msg: AxlMessage): Promise<void>;
 }

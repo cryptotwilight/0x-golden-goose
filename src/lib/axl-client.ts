@@ -2,14 +2,13 @@
 // Gensyn AXL Client -- HTTP bridge to localhost:9002
 //
 // AXL (Agent eXchange Layer) is Gensyn's P2P encrypted messaging layer.
-// Each agent runs as an AXL node; they exchange messages via /send and /recv.
-// When AXL is not available, falls back to a local EventEmitter for dev mode.
+// When agents are co-located (share one node), messages are routed in-process
+// via a shared routing table since true P2P routing requires distinct Peer IDs.
 //
 // Docs: https://github.com/gensyn-ai/axl
 // API:  https://github.com/gensyn-ai/axl/blob/main/docs/api.md
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { EventEmitter } from 'events';
 import type { AxlMessage, AgentRole } from '../types/index.js';
 
 export interface AxlTopology {
@@ -21,9 +20,8 @@ export interface AxlTopology {
 
 type MessageHandler = (msg: AxlMessage) => void;
 
-// Global fallback bus for when AXL node is not running
-const localBus = new EventEmitter();
-localBus.setMaxListeners(20);
+// Shared in-process routing table for co-located agents sharing one AXL node.
+const sharedLocalRoutes: Map<AgentRole, MessageHandler> = new Map();
 
 export class AxlClient {
   private baseUrl: string;
@@ -50,24 +48,36 @@ export class AxlClient {
       console.log(`[AXL] ${this.role} connected -- peer_id: ${this.peerId.slice(0, 16)}...`);
       return true;
     } catch {
-      console.warn(`[AXL] Node not reachable at ${this.baseUrl} -- using local bus fallback`);
+      console.warn(`[AXL] Node not reachable at ${this.baseUrl} -- using local routing`);
       this.available = false;
       return false;
     }
   }
 
-  /** Register this agent's peer ID with others (used in AXL mode) */
+  /** Register another agent's AXL peer ID for remote routing */
   registerPeer(role: AgentRole, peerId: string) {
     this.knownPeers.set(role, peerId);
   }
 
+  /** Register a local handler for co-located agents sharing this AXL node */
+  static registerLocalRoute(role: AgentRole, handler: MessageHandler) {
+    sharedLocalRoutes.set(role, handler);
+  }
+
   /** Publish a message to another agent */
   async send<T>(to: AgentRole, msg: AxlMessage<T>): Promise<void> {
+    // 1. In-process route (co-located agents sharing one AXL node)
+    const localHandler = sharedLocalRoutes.get(to);
+    if (localHandler) {
+      localHandler(msg);
+      return;
+    }
+
+    // 2. Remote AXL routing via peer ID
     if (this.available) {
       const peerId = this.knownPeers.get(to);
       if (!peerId) {
-        console.warn(`[AXL] No peer ID known for ${to}, falling back to local bus`);
-        localBus.emit(`msg:${to}`, msg);
+        console.warn(`[AXL] No peer ID known for ${to}`);
         return;
       }
       try {
@@ -86,16 +96,18 @@ export class AxlClient {
         console.log(`[AXL] Sent ${sentBytes}B to ${to} (${msg.type})`);
         return;
       } catch (err) {
-        console.warn(`[AXL] Send failed, using local bus:`, err);
+        console.warn(`[AXL] Send failed:`, err);
       }
     }
-    // Local fallback
-    localBus.emit(`msg:${to}`, msg);
   }
 
   /** Start polling /recv for inbound messages (AXL mode) */
   startReceiving(handler: MessageHandler) {
     this.handlers.push(handler);
+    // Only register if no early route was set up (e.g. in src/index.ts before init)
+    if (!sharedLocalRoutes.has(this.role)) {
+      sharedLocalRoutes.set(this.role, handler);
+    }
 
     if (this.available) {
       this.pollInterval = setInterval(async () => {
@@ -113,11 +125,6 @@ export class AxlClient {
           }
         } catch { /* timeout or unavailable */ }
       }, 500);
-    } else {
-      // Local fallback: listen on EventEmitter
-      localBus.on(`msg:${this.role}`, (msg: AxlMessage) => {
-        this.handlers.forEach((h) => h(msg));
-      });
     }
   }
 
@@ -126,6 +133,6 @@ export class AxlClient {
 
   destroy() {
     if (this.pollInterval) clearInterval(this.pollInterval);
-    localBus.removeAllListeners(`msg:${this.role}`);
+    sharedLocalRoutes.delete(this.role);
   }
 }

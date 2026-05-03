@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   useAccount, useConnect, useDisconnect,
   useReadContract, useWriteContract,
@@ -6,7 +6,7 @@ import {
 } from 'wagmi';
 import { injected } from '@wagmi/connectors';
 import { parseUnits, formatUnits } from 'viem';
-import { Archive, Wallet, ExternalLink, Loader } from 'lucide-react';
+import { Archive, Wallet, ExternalLink, Loader, Settings2, DollarSign, AlertTriangle, CheckCircle } from 'lucide-react';
 import { SWARM_FUND_ADDRESS, SEPOLIA_TOKENS, FUND_ABI, ERC20_ABI } from '../wagmi';
 
 type Tab = 'overview' | 'deposit' | 'withdraw' | 'settings';
@@ -15,17 +15,21 @@ function truncate(addr: string) {
   return addr ? `${addr.slice(0, 6)}…${addr.slice(-4)}` : '—';
 }
 
-function TxButton({ onClick, disabled, loading, children }: {
-  onClick: () => void; disabled?: boolean; loading?: boolean; children: React.ReactNode;
+function TxButton({ onClick, disabled, loading, children, variant = 'primary' }: {
+  onClick: () => void; disabled?: boolean; loading?: boolean; children: React.ReactNode; variant?: 'primary' | 'secondary';
 }) {
   return (
     <button
       onClick={onClick}
       disabled={disabled || loading}
       style={{
-        background: disabled || loading ? 'rgba(255,255,255,0.05)' : 'rgba(250,204,21,0.15)',
-        color: disabled || loading ? '#64748b' : '#facc15',
-        border: `1px solid ${disabled || loading ? 'rgba(255,255,255,0.08)' : 'rgba(250,204,21,0.3)'}`,
+        background: disabled || loading
+          ? 'rgba(255,255,255,0.05)'
+          : variant === 'primary'
+            ? 'rgba(250,204,21,0.15)'
+            : 'rgba(6,182,212,0.12)',
+        color: disabled || loading ? '#64748b' : variant === 'primary' ? '#facc15' : '#06b6d4',
+        border: `1px solid ${disabled || loading ? 'rgba(255,255,255,0.08)' : variant === 'primary' ? 'rgba(250,204,21,0.3)' : 'rgba(6,182,212,0.25)'}`,
         padding: '0.6rem 1.2rem',
         borderRadius: '8px',
         cursor: disabled || loading ? 'not-allowed' : 'pointer',
@@ -51,7 +55,126 @@ function MetricRow({ label, value, color }: { label: string; value: string; colo
   );
 }
 
-function VaultPanel({ address }: { address: `0x${string}` }) {
+/* ─── Earnings Projection ──────────────────────────────────────────────── */
+
+interface ProjectionResult {
+  signalsPerHour: number;
+  avgDeviationPct: number;
+  tradesPerDay: number;
+  estProfitPerTrade: number;
+  estProfitPerDay: number;
+  estProfitPerWeek: number;
+  tradeSizeUSD: number;
+  canTrade: boolean;
+  blockers: string[];
+  readySignals: string[];
+}
+
+function calculateProjection(
+  prices: { price: number; timestamp: number }[],
+  tickWindow: number,
+  buyThresholdPct: number,
+  sellThresholdPct: number,
+  vaultUsdc: number,
+  vaultWeth: number,
+  tradeLimitPct: number,
+  wethPrice: number,
+  scoutPollMs: number,
+): ProjectionResult {
+  const blockers: string[] = [];
+  const readySignals: string[] = [];
+  const totalVaultUSD = vaultUsdc + vaultWeth * wethPrice;
+  const tradeSizeUSD = totalVaultUSD * (tradeLimitPct / 100);
+
+  if (totalVaultUSD === 0) blockers.push('Vault is empty — deposit funds to start trading');
+  if (tradeLimitPct === 0) blockers.push('Trade limit is 0 — set a trade limit in Vault Config');
+  if (buyThresholdPct === 0 && sellThresholdPct === 0) blockers.push('Both thresholds are 0 — signals will never fire');
+  if (tickWindow < 2) blockers.push('Tick window too small — minimum is 2');
+
+  if (totalVaultUSD > 0) readySignals.push(`Vault balance: $${totalVaultUSD.toFixed(2)}`);
+  if (tradeLimitPct > 0) readySignals.push(`Trade size: $${tradeSizeUSD.toFixed(2)} (${tradeLimitPct}% of vault)`);
+
+  const priceVals = prices.map(p => p.price).filter(p => Number.isFinite(p) && p > 0);
+  if (priceVals.length < Math.max(tickWindow + 2, 6)) {
+    return {
+      signalsPerHour: 0,
+      avgDeviationPct: 0,
+      tradesPerDay: 0,
+      estProfitPerTrade: 0,
+      estProfitPerDay: 0,
+      estProfitPerWeek: 0,
+      tradeSizeUSD,
+      canTrade: blockers.length === 0,
+      blockers,
+      readySignals,
+    };
+  }
+
+  let signalCount = 0;
+  let totalDeviation = 0;
+
+  for (let i = tickWindow; i < priceVals.length; i++) {
+    const window = priceVals.slice(i - tickWindow, i);
+    const avg = window.reduce((s, x) => s + x, 0) / window.length;
+    if (!Number.isFinite(avg) || avg <= 0) continue;
+
+    const currentPrice = priceVals[i];
+    const devPct = ((currentPrice - avg) / avg) * 100;
+
+    if (devPct <= -buyThresholdPct || devPct >= sellThresholdPct) {
+      signalCount++;
+      totalDeviation += Math.abs(devPct);
+    }
+  }
+
+  const totalPairs = Math.max(1, priceVals.length - tickWindow);
+  const signalRate = signalCount / totalPairs;
+
+  const pollIntervalSec = scoutPollMs / 1000;
+  const pollsPerHour = 3600 / pollIntervalSec;
+  const signalsPerHour = +(signalRate * pollsPerHour).toFixed(1);
+  const tradesPerDay = +(signalsPerHour * 24).toFixed(0);
+  const avgDeviationPct = signalCount > 0 ? +(totalDeviation / signalCount).toFixed(4) : 0;
+
+  // Est. profit per trade: the deviation captured minus threshold (simplified model)
+  // A BUY signal fires when price drops X% below avg — we capture the mean reversion
+  // Conservatively estimate 30% of the deviation as net profit after slippage/gas
+  const capturePct = avgDeviationPct * 0.3;
+  const estProfitPerTrade = +(tradeSizeUSD * capturePct / 100).toFixed(2);
+  const estProfitPerDay = +(estProfitPerTrade * tradesPerDay).toFixed(2);
+  const estProfitPerWeek = +(estProfitPerDay * 7).toFixed(2);
+
+  return {
+    signalsPerHour,
+    avgDeviationPct,
+    tradesPerDay: Math.trunc(tradesPerDay),
+    estProfitPerTrade,
+    estProfitPerDay,
+    estProfitPerWeek,
+    tradeSizeUSD,
+    canTrade: blockers.length === 0,
+    blockers,
+    readySignals,
+  };
+}
+
+/* ─── VaultPanel (tabs) ────────────────────────────────────────────────── */
+
+function VaultPanel({
+  address,
+  swarmSettings,
+  onSwarmSettingsChange,
+  onUpdateSettings,
+  updateStatus,
+  scoutData,
+}: {
+  address: `0x${string}`;
+  swarmSettings: { tickWindow: number; buyThresholdPct: number; sellThresholdPct: number };
+  onSwarmSettingsChange: (s: Partial<{ tickWindow: number; buyThresholdPct: number; sellThresholdPct: number }>) => void;
+  onUpdateSettings: () => void;
+  updateStatus: 'idle' | 'ok' | 'error';
+  scoutData: { prices: { price: number; timestamp: number }[]; latestPrice: number; scoutPollMs: number };
+}) {
   const [tab, setTab] = useState<Tab>('overview');
   const [depositToken, setDepositToken] = useState<'USDC' | 'WETH'>('USDC');
   const [depositAmt, setDepositAmt] = useState('');
@@ -68,7 +191,6 @@ function VaultPanel({ address }: { address: `0x${string}` }) {
   const tokenAddr = (sym: 'USDC' | 'WETH') => SEPOLIA_TOKENS[sym];
   const decimals = (sym: 'USDC' | 'WETH') => sym === 'USDC' ? 6 : 18;
 
-  // Read vault data
   const useVaultRead = (fn: string, args: any[]) =>
     useReadContract({ address: SWARM_FUND_ADDRESS, abi: FUND_ABI, functionName: fn as any, args: args as any });
 
@@ -83,6 +205,12 @@ function VaultPanel({ address }: { address: `0x${string}` }) {
   const { data: wethInflight, refetch: r8 }    = useVaultRead('inflightFunds',     [address, SEPOLIA_TOKENS.WETH]);
   const { data: wethLimit, refetch: r9 }       = useVaultRead('getTradeLimit',     [address, SEPOLIA_TOKENS.WETH]);
   const { data: wethHarvest, refetch: r10 }    = useVaultRead('harvestableAmount', [address, SEPOLIA_TOKENS.WETH]);
+
+  // Wallet balances (for deposit form)
+  const { data: walletUsdc } = useReadContract({ address: SEPOLIA_TOKENS.USDC, abi: ERC20_ABI, functionName: 'balanceOf', args: [address] });
+  const { data: walletWeth } = useReadContract({ address: SEPOLIA_TOKENS.WETH, abi: ERC20_ABI, functionName: 'balanceOf', args: [address] });
+  const walletBal = depositToken === 'USDC' ? walletUsdc : walletWeth;
+  const walletDecimals = depositToken === 'USDC' ? 6 : 18;
 
   const refetchAll = () => { r1(); r2(); r3(); r4(); r5(); r6(); r7(); r8(); r9(); r10(); refetchBot(); };
 
@@ -107,12 +235,22 @@ function VaultPanel({ address }: { address: `0x${string}` }) {
   const handleDeposit = async () => {
     const sym = depositToken;
     const amt = parseUnits(depositAmt, decimals(sym));
+    const tok = tokenAddr(sym);
+
+    // Pre-check: verify user has enough token balance in wallet
+    const bal = await publicClient!.readContract({ address: tok, abi: ERC20_ABI, functionName: 'balanceOf', args: [address as `0x${string}`] });
+    if (bal < amt) {
+      const balStr = Number(formatUnits(bal as bigint, decimals(sym))).toFixed(4);
+      setTxStatus(`❌ Insufficient ${sym}: wallet has ${balStr}, need ${depositAmt}`);
+      setTimeout(() => setTxStatus(''), 8000);
+      return;
+    }
+
     await execTx(async () => {
-      // Approve first
-      const appHash = await writeContractAsync({ address: tokenAddr(sym), abi: ERC20_ABI, functionName: 'approve', args: [SWARM_FUND_ADDRESS, amt] });
+      const appHash = await writeContractAsync({ address: tok, abi: ERC20_ABI, functionName: 'approve', args: [SWARM_FUND_ADDRESS, amt] });
       await publicClient!.waitForTransactionReceipt({ hash: appHash });
       setTxStatus('Approved! Depositing…');
-      return writeContractAsync({ address: SWARM_FUND_ADDRESS, abi: FUND_ABI, functionName: 'deposit', args: [tokenAddr(sym), amt] });
+      return writeContractAsync({ address: SWARM_FUND_ADDRESS, abi: FUND_ABI, functionName: 'deposit', args: [tok, amt] });
     }, `Deposit ${depositAmt} ${sym}`);
     setDepositAmt('');
   };
@@ -134,6 +272,13 @@ function VaultPanel({ address }: { address: `0x${string}` }) {
     const amt = parseUnits(limitAmt, decimals(sym));
     await execTx(() => writeContractAsync({ address: SWARM_FUND_ADDRESS, abi: FUND_ABI, functionName: 'setTradeLimit', args: [tokenAddr(sym), amt] }), `Set ${sym} Limit`);
     setLimitAmt('');
+  };
+
+  const handleSetLimitPct = async (pct: number, token: 'USDC' | 'WETH', balance: bigint, dec: number) => {
+    const bal = Number(formatUnits(balance, dec));
+    const limit = (bal * pct / 100).toFixed(dec === 6 ? 2 : 6);
+    setLimitToken(token);
+    setLimitAmt(limit);
   };
 
   const tabStyle = (t: Tab) => ({
@@ -163,6 +308,10 @@ function VaultPanel({ address }: { address: `0x${string}` }) {
     flex: 'none',
     width: '90px',
   };
+
+  const usdcTradeLimitPct = usdcLimit !== undefined && usdcLimit > 0n && usdcReal !== undefined && usdcReal > 0n
+    ? +(Number(formatUnits(usdcLimit, 6)) / Number(formatUnits(usdcReal, 6)) * 100).toFixed(1)
+    : 0;
 
   return (
     <div>
@@ -223,9 +372,18 @@ function VaultPanel({ address }: { address: `0x${string}` }) {
               <option>USDC</option>
               <option>WETH</option>
             </select>
-            <input style={inputStyle} type="number" placeholder="Amount" value={depositAmt} onChange={e => setDepositAmt(e.target.value)} />
+            <div style={{ flex: 1 }}>
+              <input style={inputStyle} type="number" placeholder="Amount" value={depositAmt} onChange={e => setDepositAmt(e.target.value)} />
+              <div style={{ color: '#64748b', fontSize: '0.75rem', marginTop: '2px' }}>
+                Available: {walletBal !== undefined ? Number(formatUnits(walletBal as bigint, walletDecimals)).toFixed(4) : '…'} {depositToken}
+              </div>
+            </div>
           </div>
-          <TxButton onClick={handleDeposit} disabled={!depositAmt || parseFloat(depositAmt) <= 0}>
+          <TxButton onClick={handleDeposit} disabled={
+            !depositAmt ||
+            parseFloat(depositAmt) <= 0 ||
+            (walletBal !== undefined && parseFloat(depositAmt) > Number(formatUnits(walletBal as bigint, walletDecimals)))
+          }>
             Approve & Deposit
           </TxButton>
         </div>
@@ -248,34 +406,157 @@ function VaultPanel({ address }: { address: `0x${string}` }) {
         </div>
       )}
 
-      {/* Settings Tab */}
+      {/* Settings Tab — unified Swarm + Vault config + Earnings Projection */}
       {tab === 'settings' && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', maxWidth: '540px' }}>
-          {/* Bot Wallet */}
-          <div style={{ background: 'rgba(0,0,0,0.3)', borderRadius: '12px', padding: '1rem', border: '1px solid rgba(255,255,255,0.06)' }}>
-            <div style={{ fontWeight: 600, marginBottom: '0.5rem' }}>Authorized Bot Wallet</div>
-            <div style={{ color: '#94a3b8', fontSize: '0.85rem', marginBottom: '0.75rem' }}>
-              Current: <span style={{ color: '#06b6d4', fontFamily: 'monospace' }}>{botWallet ? botWallet as string : 'Not set'}</span>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+          {/* Earnings Projection */}
+          <EarningsProjection
+            usdcReal={usdcReal}
+            wethReal={wethReal}
+            usdcLimit={usdcLimit}
+            swarmSettings={swarmSettings}
+            prices={scoutData.prices}
+            latestPrice={scoutData.latestPrice}
+            scoutPollMs={scoutData.scoutPollMs}
+          />
+
+          {/* ── Swarm Trading Configuration ─────────────────────────── */}
+          <div style={{ background: 'rgba(0,0,0,0.3)', borderRadius: '12px', padding: '1.25rem', border: '1px solid rgba(255,255,255,0.06)' }}>
+            <div style={{ fontWeight: 700, marginBottom: '0.25rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <Settings2 size={18} className="text-gold" /> Swarm Trading Configuration
             </div>
-            <div style={{ display: 'flex', gap: '0.5rem' }}>
-              <input style={inputStyle} placeholder="0x... new bot address" value={newBot} onChange={e => setNewBot(e.target.value)} />
-              <TxButton onClick={handleSetBot} disabled={!newBot.startsWith('0x')}>Set</TxButton>
+            <div style={{ color: '#94a3b8', fontSize: '0.85rem', marginBottom: '1.25rem' }}>
+              Controls how sensitive the swarm is to price movements. Lower thresholds and smaller tick windows trigger more trades.
             </div>
+
+            {/* Tick Window */}
+            <div style={{ marginBottom: '1rem' }}>
+              <label style={{ color: '#94a3b8', fontSize: '0.82rem', display: 'block', marginBottom: '0.35rem' }}>Tick Window</label>
+              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                <input
+                  type="number"
+                  value={swarmSettings.tickWindow}
+                  onChange={e => onSwarmSettingsChange({ tickWindow: parseInt(e.target.value) || 2 })}
+                  min="2"
+                  max="50"
+                  style={{ ...inputStyle, width: '100px', flex: 'none' }}
+                />
+                <span style={{ color: '#64748b', fontSize: '0.8rem' }}>
+                  Recent ticks used for rolling average (2 = most sensitive)
+                </span>
+              </div>
+            </div>
+
+            {/* Thresholds */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
+              <div>
+                <label style={{ color: '#94a3b8', fontSize: '0.82rem', display: 'block', marginBottom: '0.35rem' }}>BUY Threshold (%)</label>
+                <input
+                  type="number"
+                  value={swarmSettings.buyThresholdPct}
+                  onChange={e => onSwarmSettingsChange({ buyThresholdPct: parseFloat(e.target.value) || 0 })}
+                  min="0"
+                  step="0.001"
+                  style={{ ...inputStyle, textAlign: 'center' }}
+                />
+              </div>
+              <div>
+                <label style={{ color: '#94a3b8', fontSize: '0.82rem', display: 'block', marginBottom: '0.35rem' }}>SELL Threshold (%)</label>
+                <input
+                  type="number"
+                  value={swarmSettings.sellThresholdPct}
+                  onChange={e => onSwarmSettingsChange({ sellThresholdPct: parseFloat(e.target.value) || 0 })}
+                  min="0"
+                  step="0.001"
+                  style={{ ...inputStyle, textAlign: 'center' }}
+                />
+              </div>
+            </div>
+
+            {/* Quick presets */}
+            <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
+              <span style={{ color: '#64748b', fontSize: '0.78rem', alignSelf: 'center' }}>Presets:</span>
+              <button
+                onClick={() => onSwarmSettingsChange({ tickWindow: 2, buyThresholdPct: 0.0004, sellThresholdPct: 0.0004 })}
+                style={{ background: 'rgba(16,185,129,0.1)', color: '#10b981', border: '1px solid rgba(16,185,129,0.2)', padding: '4px 10px', borderRadius: '6px', cursor: 'pointer', fontSize: '0.78rem' }}
+              >
+                Hyper (1¢ moves)
+              </button>
+              <button
+                onClick={() => onSwarmSettingsChange({ tickWindow: 3, buyThresholdPct: 0.004, sellThresholdPct: 0.004 })}
+                style={{ background: 'rgba(250,204,21,0.1)', color: '#facc15', border: '1px solid rgba(250,204,21,0.2)', padding: '4px 10px', borderRadius: '6px', cursor: 'pointer', fontSize: '0.78rem' }}
+              >
+                Aggressive (10¢)
+              </button>
+              <button
+                onClick={() => onSwarmSettingsChange({ tickWindow: 5, buyThresholdPct: 0.009, sellThresholdPct: 0.009 })}
+                style={{ background: 'rgba(249,115,22,0.1)', color: '#f97316', border: '1px solid rgba(249,115,22,0.2)', padding: '4px 10px', borderRadius: '6px', cursor: 'pointer', fontSize: '0.78rem' }}
+              >
+                Moderate (20¢)
+              </button>
+            </div>
+
+            <TxButton
+              onClick={onUpdateSettings}
+              disabled={updateStatus === 'ok'}
+              variant="primary"
+            >
+              {updateStatus === 'ok' ? '✓ Updated' : updateStatus === 'error' ? '✗ Failed — Retry' : 'Apply Swarm Settings'}
+            </TxButton>
           </div>
 
-          {/* Trade Limit */}
-          <div style={{ background: 'rgba(0,0,0,0.3)', borderRadius: '12px', padding: '1rem', border: '1px solid rgba(255,255,255,0.06)' }}>
-            <div style={{ fontWeight: 600, marginBottom: '0.5rem' }}>Trade Limit Per Swap</div>
-            <div style={{ color: '#94a3b8', fontSize: '0.85rem', marginBottom: '0.75rem' }}>
-              Max amount the bot can withdraw in a single trade.
+          {/* ── Vault Configuration ─────────────────────────────────── */}
+          <div style={{ background: 'rgba(0,0,0,0.3)', borderRadius: '12px', padding: '1.25rem', border: '1px solid rgba(255,255,255,0.06)' }}>
+            <div style={{ fontWeight: 700, marginBottom: '0.25rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <Wallet size={18} className="text-cyan" /> Vault Configuration
             </div>
-            <div style={{ display: 'flex', gap: '0.5rem' }}>
-              <select style={selectStyle} value={limitToken} onChange={e => setLimitToken(e.target.value as any)}>
-                <option>USDC</option>
-                <option>WETH</option>
-              </select>
-              <input style={inputStyle} type="number" placeholder="Limit amount" value={limitAmt} onChange={e => setLimitAmt(e.target.value)} />
-              <TxButton onClick={handleSetLimit} disabled={!limitAmt || parseFloat(limitAmt) <= 0}>Set</TxButton>
+            <div style={{ color: '#94a3b8', fontSize: '0.85rem', marginBottom: '1.25rem' }}>
+              Authorize the bot and set per-token trade limits. Max trade size defaults to 50% of your vault balance.
+            </div>
+
+            {/* Bot Wallet */}
+            <div style={{ marginBottom: '1rem' }}>
+              <label style={{ color: '#94a3b8', fontSize: '0.82rem', display: 'block', marginBottom: '0.35rem' }}>Authorized Bot Wallet</label>
+              <div style={{ color: '#64748b', fontSize: '0.8rem', marginBottom: '0.5rem' }}>
+                Current: <span style={{ color: botWallet ? '#06b6d4' : '#f43f5e', fontFamily: 'monospace' }}>{botWallet ? botWallet : 'Not set'}</span>
+              </div>
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <input style={inputStyle} placeholder="0x... bot wallet address" value={newBot} onChange={e => setNewBot(e.target.value)} />
+                <TxButton onClick={handleSetBot} disabled={!newBot.startsWith('0x') || newBot.length < 42}>Set</TxButton>
+              </div>
+            </div>
+
+            {/* Trade Limits */}
+            <div>
+              <label style={{ color: '#94a3b8', fontSize: '0.82rem', display: 'block', marginBottom: '0.5rem' }}>Trade Limit Per Swap</label>
+              <div style={{ color: '#64748b', fontSize: '0.8rem', marginBottom: '0.75rem' }}>
+                Current USDC limit: {usdcTradeLimitPct > 0 ? `${usdcTradeLimitPct}% of vault` : 'Not set'}
+              </div>
+
+              {/* Quick 50% buttons */}
+              <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.75rem', flexWrap: 'wrap' }}>
+                <button
+                  onClick={() => usdcReal !== undefined && wethReal !== undefined && handleSetLimitPct(50, 'USDC', usdcReal as bigint, 6)}
+                  style={{ background: 'rgba(16,185,129,0.1)', color: '#10b981', border: '1px solid rgba(16,185,129,0.2)', padding: '4px 10px', borderRadius: '6px', cursor: 'pointer', fontSize: '0.78rem' }}
+                >
+                  50% USDC vault
+                </button>
+                <button
+                  onClick={() => usdcReal !== undefined && wethReal !== undefined && handleSetLimitPct(50, 'WETH', wethReal as bigint, 18)}
+                  style={{ background: 'rgba(16,185,129,0.1)', color: '#10b981', border: '1px solid rgba(16,185,129,0.2)', padding: '4px 10px', borderRadius: '6px', cursor: 'pointer', fontSize: '0.78rem' }}
+                >
+                  50% WETH vault
+                </button>
+              </div>
+
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <select style={selectStyle} value={limitToken} onChange={e => setLimitToken(e.target.value as any)}>
+                  <option>USDC</option>
+                  <option>WETH</option>
+                </select>
+                <input style={inputStyle} type="number" placeholder="Limit amount" value={limitAmt} onChange={e => setLimitAmt(e.target.value)} />
+                <TxButton onClick={handleSetLimit} disabled={!limitAmt || parseFloat(limitAmt) <= 0}>Set Limit</TxButton>
+              </div>
             </div>
           </div>
         </div>
@@ -284,7 +565,126 @@ function VaultPanel({ address }: { address: `0x${string}` }) {
   );
 }
 
-export default function MyVault() {
+/* ─── Earnings Projection Component ──────────────────────────────────── */
+
+function EarningsProjection({
+  usdcReal,
+  wethReal,
+  usdcLimit,
+  swarmSettings,
+  prices,
+  latestPrice,
+  scoutPollMs,
+}: {
+  usdcReal: bigint | undefined;
+  wethReal: bigint | undefined;
+  usdcLimit: bigint | undefined;
+  swarmSettings: { tickWindow: number; buyThresholdPct: number; sellThresholdPct: number };
+  prices: { price: number; timestamp: number }[];
+  latestPrice: number;
+  scoutPollMs: number;
+}) {
+
+  const vaultUsdc = usdcReal !== undefined ? Number(formatUnits(usdcReal as bigint, 6)) : 0;
+  const vaultWeth = wethReal !== undefined ? Number(formatUnits(wethReal as bigint, 18)) : 0;
+  const limitUsdc = usdcLimit !== undefined ? Number(formatUnits(usdcLimit as bigint, 6)) : 0;
+  const tradeLimitPct = vaultUsdc > 0 ? +(limitUsdc / vaultUsdc * 100).toFixed(1) : 0;
+
+  const projection = useMemo(() => {
+    return calculateProjection(
+      prices,
+      swarmSettings.tickWindow,
+      swarmSettings.buyThresholdPct,
+      swarmSettings.sellThresholdPct,
+      vaultUsdc,
+      vaultWeth,
+      tradeLimitPct,
+      latestPrice,
+      scoutPollMs,
+    );
+  }, [prices, swarmSettings, vaultUsdc, vaultWeth, tradeLimitPct, latestPrice, scoutPollMs]);
+
+  return (
+    <div style={{ background: 'rgba(0,0,0,0.3)', borderRadius: '12px', padding: '1.25rem', border: '1px solid rgba(255,255,255,0.06)' }}>
+      <div style={{ fontWeight: 700, marginBottom: '0.25rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+        <DollarSign size={18} className="text-gold" /> Earnings Projection
+      </div>
+      <div style={{ color: '#94a3b8', fontSize: '0.85rem', marginBottom: '1rem' }}>
+        Estimated returns based on recent price history and your current settings.
+      </div>
+
+      {/* Status badges */}
+      <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
+        {projection.canTrade ? (
+          <span style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'rgba(16,185,129,0.1)', color: '#10b981', padding: '4px 10px', borderRadius: '6px', fontSize: '0.8rem', fontWeight: 600 }}>
+            <CheckCircle size={14} /> Ready to Trade
+          </span>
+        ) : (
+          <span style={{ display: 'flex', alignItems: 'center', gap: '4px', background: 'rgba(244,63,94,0.1)', color: '#f43f5e', padding: '4px 10px', borderRadius: '6px', fontSize: '0.8rem', fontWeight: 600 }}>
+            <AlertTriangle size={14} /> Configuration Needed
+          </span>
+        )}
+      </div>
+
+      {/* Blockers */}
+      {projection.blockers.length > 0 && (
+        <div style={{ marginBottom: '1rem', padding: '0.75rem 1rem', borderRadius: '8px', background: 'rgba(244,63,94,0.08)', border: '1px solid rgba(244,63,94,0.2)', fontSize: '0.85rem' }}>
+          {projection.blockers.map((b, i) => (
+            <div key={i} style={{ color: '#fda4af', marginBottom: i < projection.blockers.length - 1 ? '0.25rem' : 0 }}>⚠ {b}</div>
+          ))}
+        </div>
+      )}
+
+      {/* Ready signals */}
+      {projection.readySignals.length > 0 && (
+        <div style={{ marginBottom: '1rem', display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+          {projection.readySignals.map((s, i) => (
+            <span key={i} style={{ color: '#94a3b8', fontSize: '0.82rem' }}>✓ {s}</span>
+          ))}
+        </div>
+      )}
+
+      {/* Projection metrics */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '1rem' }}>
+        {[
+          { label: 'Est. Signals/Hour', value: `${projection.signalsPerHour}`, sub: `at ${scoutPollMs / 1000}s poll`, color: '#06b6d4' },
+          { label: 'Est. Trades/Day', value: `${projection.tradesPerDay}`, sub: 'based on recent volatility', color: '#8b5cf6' },
+          { label: 'Trade Size', value: `$${projection.tradeSizeUSD.toFixed(2)}`, sub: `${tradeLimitPct}% of vault`, color: '#f59e0b' },
+          { label: 'Est. Profit/Trade', value: `$${projection.estProfitPerTrade.toFixed(2)}`, sub: `avg dev ${projection.avgDeviationPct.toFixed(3)}%`, color: projection.estProfitPerTrade >= 0 ? '#10b981' : '#f43f5e' },
+          { label: 'Est. Profit/Day', value: `$${projection.estProfitPerDay.toFixed(2)}`, sub: '', color: projection.estProfitPerDay >= 0 ? '#10b981' : '#f43f5e' },
+          { label: 'Est. Profit/Week', value: `$${projection.estProfitPerWeek.toFixed(2)}`, sub: '', color: projection.estProfitPerWeek >= 0 ? '#10b981' : '#f43f5e' },
+        ].map(({ label, value, sub, color }) => (
+          <div key={label} style={{ background: 'rgba(0,0,0,0.2)', borderRadius: '10px', padding: '0.85rem', border: '1px solid rgba(255,255,255,0.04)' }}>
+            <div style={{ color: '#94a3b8', fontSize: '0.78rem', marginBottom: '0.35rem' }}>{label}</div>
+            <div style={{ fontSize: '1.25rem', fontWeight: 700, color, fontFamily: 'monospace' }}>{value}</div>
+            {sub && <div style={{ color: '#64748b', fontSize: '0.72rem', marginTop: '0.2rem' }}>{sub}</div>}
+          </div>
+        ))}
+      </div>
+
+      {/* Price context */}
+      <div style={{ marginTop: '0.75rem', padding: '0.5rem 0.75rem', background: 'rgba(0,0,0,0.15)', borderRadius: '8px', fontSize: '0.8rem', color: '#64748b' }}>
+        WETH: ${latestPrice.toFixed(2)} · {prices.length} ticks tracked · 1¢ move = {((0.01 / latestPrice) * 100).toFixed(4)}%
+      </div>
+    </div>
+  );
+}
+
+/* ─── MyVault (outer wrapper) ────────────────────────────────────────── */
+
+export default function MyVault({
+  swarmSettings,
+  onSwarmSettingsChange,
+  onUpdateSettings,
+  updateStatus,
+  scoutData,
+}: {
+  swarmSettings: { tickWindow: number; buyThresholdPct: number; sellThresholdPct: number };
+  onSwarmSettingsChange: (s: Partial<{ tickWindow: number; buyThresholdPct: number; sellThresholdPct: number }>) => void;
+  onUpdateSettings: () => void;
+  updateStatus: 'idle' | 'ok' | 'error';
+  scoutData: { prices: { price: number; timestamp: number }[]; latestPrice: number; scoutPollMs: number };
+}) {
   const { address, isConnected, chain } = useAccount();
   const { connect } = useConnect();
   const { disconnect } = useDisconnect();
@@ -330,7 +730,14 @@ export default function MyVault() {
             ⚠️ Please switch your wallet to <strong>Sepolia</strong> to interact with the fund.
           </div>
         ) : (
-          <VaultPanel address={address!} />
+          <VaultPanel
+            address={address!}
+            swarmSettings={swarmSettings}
+            onSwarmSettingsChange={onSwarmSettingsChange}
+            onUpdateSettings={onUpdateSettings}
+            updateStatus={updateStatus}
+            scoutData={scoutData}
+          />
         )}
       </div>
     </div>

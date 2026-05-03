@@ -5,6 +5,7 @@ This is a premium, real-time web dashboard for the 0x Golden Goose trading swarm
 ## Features
 
 - **Real-Time Data**: Polls the backend API (`/api/stats`) every second to display live metrics from the PriceScout, RiskManager, and Executor agents.
+- **SwarmFund Vault Management**: Integrated **wagmi/viem** wallet connection allows users to manage their isolated vaults (Deposit, Withdraw, Set Trade Limits, Authorize Bots) directly on Sepolia testnet.
 - **Dynamic Configuration**: Connect to a local backend (`http://localhost:3001`) or a remote backend via an ngrok tunnel directly from the UI.
 - **Premium Design**: Dark-mode aesthetic with glassmorphism, vibrant accents, and smooth animations.
 - **Firebase Ready**: Built as a pure SPA, making it 100% compatible with static hosting services like Firebase Hosting.

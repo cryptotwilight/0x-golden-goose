@@ -16,8 +16,31 @@ import { PriceScout }   from './agents/price-scout.js';
 import { RiskManager }  from './agents/risk-manager.js';
 import { Executor }     from './agents/executor.js';
 import { KeeperHubClient } from './lib/keeperhub.js';
+import { AxlClient } from './lib/axl-client.js';
+import { initRpcFailover } from './lib/viem-client.js';
 import { createServer } from 'node:http';
 import { config } from './config/index.js';
+
+// ── Shared error log exposed via /api/stats ──────────────────────────────────
+const MAX_ERRORS = 50;
+const errorLog: { agent: string; message: string; timestamp: number }[] = [];
+
+export function logError(agent: string, message: string) {
+  errorLog.push({ agent, message, timestamp: Date.now() });
+  if (errorLog.length > MAX_ERRORS) errorLog.shift();
+}
+
+// Wrap console.error to capture errors for the UI
+const origError = console.error.bind(console);
+console.error = (...args: unknown[]) => {
+  const msg = args.join(' ');
+  // Extract agent name from log prefix like [executor], [scout], [risk-manager]
+  const match = msg.match(/^\[(\w[\w-]+)\]/);
+  if (match && (msg.includes('error') || msg.includes('Error') || msg.includes('failed') || msg.includes('Failed'))) {
+    logError(match[1], msg.replace(/^\[\w[\w-]+\]\s*/, ''));
+  }
+  origError(...args);
+};
 
 // ── Banner ────────────────────────────────────────────────────────────────────
 function printBanner() {
@@ -189,8 +212,9 @@ function startCallbackServer(scout: PriceScout, risk: RiskManager, executor: Exe
         scout: scout.stats,
         risk: risk.stats,
         executor: executor.stats,
+        errors: errorLog,
         timestamp: Date.now()
-      }));
+      }, (_, v) => (typeof v === 'bigint' ? v.toString() : v)));
     } else {
       res.writeHead(404);
       res.end();
@@ -206,12 +230,31 @@ function startCallbackServer(scout: PriceScout, risk: RiskManager, executor: Exe
 // ── Main ──────────────────────────────────────────────────────────────────────
 async function main() {
   printBanner();
+  process.stdout.write(chalk.gray('  Discovering RPC endpoints from chainlist.org...\n'));
+  await initRpcFailover();
+
   process.stdout.write(chalk.gray('  Initialising agents...\n'));
 
   const scout    = new PriceScout();
   const risk     = new RiskManager();
   const executor = new Executor();
   const keeper   = new KeeperHubClient();
+
+  // Wire AXL local routes BEFORE init so co-located agents can message each other
+  // during onInit (e.g. scout sending signals before risk-manager starts).
+  // All agents share one AXL node, so messages route in-process via the shared table.
+  AxlClient.registerLocalRoute('risk-manager', (msg) => {
+    risk.messagesReceived++;
+    risk.onMessage(msg).catch((err) => console.error(`[risk-manager] onMessage error:`, err));
+  });
+  AxlClient.registerLocalRoute('executor', (msg) => {
+    executor.messagesReceived++;
+    executor.onMessage(msg).catch((err) => console.error(`[executor] onMessage error:`, err));
+  });
+  AxlClient.registerLocalRoute('scout', (msg) => {
+    scout.messagesReceived++;
+    scout.onMessage(msg).catch((err) => console.error(`[scout] onMessage error:`, err));
+  });
 
   // Start HTTP API immediately so the web UI can poll /api/stats while agents
   // initialise (RPC / 0G / first quote can be slow or stall without blocking the port).

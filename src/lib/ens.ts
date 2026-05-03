@@ -9,15 +9,10 @@
 //              ENS -- Most Creative Use of ENS ($2,500)
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { createPublicClient, http, getAddress } from 'viem';
-import { mainnet } from 'viem/chains';
+import { getAddress } from 'viem';
 import { config } from '../config/index.js';
+import { getMainnetClient } from './viem-client.js';
 import type { AgentRole } from '../types/index.js';
-
-const ensClient = createPublicClient({
-  chain: mainnet,
-  transport: http(config.mainnetRpc),
-});
 
 // Cache resolved ENS names to avoid hammering the RPC
 const cache = new Map<string, { addr: `0x${string}` | null; ts: number }>();
@@ -29,7 +24,8 @@ export async function resolveEns(name: string): Promise<`0x${string}` | null> {
   if (cached && Date.now() - cached.ts < CACHE_TTL_MS) return cached.addr;
 
   try {
-    const addr = await ensClient.getEnsAddress({ name: normalise(name) });
+    const client = getMainnetClient();
+    const addr = await client.getEnsAddress({ name: normalise(name) });
     cache.set(name, { addr, ts: Date.now() });
     return addr;
   } catch (err) {
@@ -48,7 +44,8 @@ export async function lookupEns(address: `0x${string}`): Promise<string | null> 
   }
 
   try {
-    const name = await ensClient.getEnsName({ address: getAddress(address) });
+    const client = getMainnetClient();
+    const name = await client.getEnsName({ address: getAddress(address) });
     // reuse cache with name as value
     (cache as Map<string, { addr: string | null; ts: number }>).set(key, {
       addr: name,
@@ -79,7 +76,8 @@ export async function resolveTokenByEns(nameOrAddress: string): Promise<`0x${str
 export async function getAgentAvatar(role: AgentRole): Promise<string | null> {
   const name = agentEnsName(role);
   try {
-    const avatar = await ensClient.getEnsAvatar({ name: normalise(name) });
+    const client = getMainnetClient();
+    const avatar = await client.getEnsAvatar({ name: normalise(name) });
     return avatar;
   } catch {
     return null;

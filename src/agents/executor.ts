@@ -9,7 +9,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { BaseAgent } from './base-agent.js';
-import { executeSwap, applySlippage, tokenAddress, ERC20_ABI, sepoliaClient } from '../lib/uniswap.js';
+import { executeSwap, applySlippage, tokenAddress, ERC20_ABI, getQuote } from '../lib/uniswap.js';
+import { getSepoliaClient, sepoliaFailover } from '../lib/viem-client.js';
 import { privateKeyToAccount } from 'viem/accounts';
 import { createWalletClient, http, parseAbi } from 'viem';
 import { sepolia } from 'viem/chains';
@@ -69,10 +70,11 @@ export class Executor extends BaseAgent {
 
   private async refreshBalance(): Promise<void> {
     try {
-      const bal = await sepoliaClient.getBalance({ address: this.walletAddress as `0x${string}` });
+      const client = getSepoliaClient();
+      const bal = await client.getBalance({ address: this.walletAddress as `0x${string}` });
       const ethStr = parseFloat(formatEther(bal)).toFixed(4) + ' ETH';
-      
-      const usdcBal = await sepoliaClient.readContract({
+
+      const usdcBal = await client.readContract({
         address: TOKENS.sepolia.USDC,
         abi: ERC20_ABI,
         functionName: 'balanceOf',
@@ -84,19 +86,18 @@ export class Executor extends BaseAgent {
       if (config.fundContractAddress) {
         const fund = config.fundContractAddress as `0x${string}`;
         const vaultOwner = (config.fundOwnerAddress || this.walletAddress) as `0x${string}`;
-        
-        // Fetch Fund Metrics
+
         const tokens = { WETH: TOKENS.sepolia.WETH, USDC: TOKENS.sepolia.USDC };
         const metrics: any = { address: fund, owner: vaultOwner, tokens: {} };
-        
-        metrics.botWallet = await sepoliaClient.readContract({ address: fund, abi: FUND_ABI, functionName: 'getBotWallet', args: [vaultOwner] });
+
+        metrics.botWallet = await client.readContract({ address: fund, abi: FUND_ABI, functionName: 'getBotWallet', args: [vaultOwner] });
 
         for (const [sym, addr] of Object.entries(tokens)) {
-          const real = await sepoliaClient.readContract({ address: fund, abi: FUND_ABI, functionName: 'realBalance', args: [vaultOwner, addr] }) as bigint;
-          const notional = await sepoliaClient.readContract({ address: fund, abi: FUND_ABI, functionName: 'notionalBalance', args: [vaultOwner, addr] }) as bigint;
-          const inflight = await sepoliaClient.readContract({ address: fund, abi: FUND_ABI, functionName: 'inflightFunds', args: [vaultOwner, addr] }) as bigint;
-          const limit = await sepoliaClient.readContract({ address: fund, abi: FUND_ABI, functionName: 'getTradeLimit', args: [vaultOwner, addr] }) as bigint;
-          
+          const real = await client.readContract({ address: fund, abi: FUND_ABI, functionName: 'realBalance', args: [vaultOwner, addr] }) as bigint;
+          const notional = await client.readContract({ address: fund, abi: FUND_ABI, functionName: 'notionalBalance', args: [vaultOwner, addr] }) as bigint;
+          const inflight = await client.readContract({ address: fund, abi: FUND_ABI, functionName: 'inflightFunds', args: [vaultOwner, addr] }) as bigint;
+          const limit = await client.readContract({ address: fund, abi: FUND_ABI, functionName: 'getTradeLimit', args: [vaultOwner, addr] }) as bigint;
+
           const divisor = sym === 'USDC' ? 1e6 : 1e18;
           const harvestable = notional > limit ? notional - limit : 0n;
 
@@ -111,7 +112,6 @@ export class Executor extends BaseAgent {
         this.fundMetrics = metrics;
       }
     } catch (e) {
-      // non-fatal -- balance just shows stale value
       console.error('[executor] Error fetching balances:', e);
     }
   }
@@ -122,7 +122,7 @@ export class Executor extends BaseAgent {
 
   protected async onStop(): Promise<void> {}
 
-  protected async onMessage(msg: AxlMessage): Promise<void> {
+  async onMessage(msg: AxlMessage): Promise<void> {
     if (msg.type !== 'DECISION') return;
     const decision = msg.payload as TradeDecision;
 
@@ -167,86 +167,166 @@ export class Executor extends BaseAgent {
     };
 
     if (!this.liveMode) {
-      // Simulate: log the swap params without submitting
       console.log(`[executor] [SIMULATE] Would swap ${amountIn} tokenIn → tokenOut on Sepolia`);
       this.totalSuccess++;
       const result: TradeResult = {
         ...base,
         status: 'confirmed',
         txHash: `0xSIMULATED_${Date.now().toString(16)}` as `0x${string}`,
-        amountOut: (amountIn * 3000n) / (10n ** 12n), // fake USDC amount
+        amountOut: (amountIn * 3000n) / (10n ** 12n),
       };
       return result;
     }
 
+    const tokenIn  = TOKENS.sepolia.WETH;
+    const tokenOut = TOKENS.sepolia.USDC;
+    const fund = config.fundContractAddress as `0x${string}`;
+    const rawKey = config.privateKey as string;
+    const hexKey = (rawKey.startsWith('0x') ? rawKey : `0x${rawKey}`) as `0x${string}`;
+    const account = privateKeyToAccount(hexKey);
+    const walletClient = createWalletClient({
+      account,
+      chain: sepolia,
+      transport: http(sepoliaFailover.getCurrentUrl()),
+    });
+    const client = getSepoliaClient();
+    const vaultOwner = (config.fundOwnerAddress || account.address) as `0x${string}`;
+
+    let drawnDown = false;
+    let amountOut = 0n;
+    let swapTxHash: `0x${string}` | undefined;
+    let swapStatus: TradeStatus | undefined;
+
     try {
-      const tokenIn  = TOKENS.sepolia.WETH;
-      const tokenOut = TOKENS.sepolia.USDC;
-      const fund = config.fundContractAddress as `0x${string}`;
-
-      // 1. Drawdown from SwarmFund
-      const rawKey = config.privateKey as string;
-      const hexKey = (rawKey.startsWith('0x') ? rawKey : `0x${rawKey}`) as `0x${string}`;
-      const account = privateKeyToAccount(hexKey);
-      const walletClient = createWalletClient({ account, chain: sepolia, transport: http(config.sepoliaRpc) });
-      const vaultOwner = (config.fundOwnerAddress || account.address) as `0x${string}`;
-
+      // 1. Pre-flight checks
       if (fund) {
-        console.log(`[executor] Drawing down ${amountIn} from SwarmFund vault of ${vaultOwner}...`);
+        console.log(`[executor] Pre-flight: vaultOwner=${vaultOwner}, botExecutor=${account.address}`);
+        const botWallet = await client.readContract({ address: fund, abi: FUND_ABI, functionName: 'getBotWallet', args: [vaultOwner] }) as `0x${string}`;
+        console.log(`[executor] Pre-flight: contract botWallet=${botWallet}`);
+        if (botWallet.toLowerCase() !== account.address.toLowerCase()) {
+          throw new Error(`Bot wallet not authorized. Contract expects: ${botWallet}, Executor is: ${account.address}. Set it in the UI Settings tab.`);
+        }
+
+        const tradeLimit = await client.readContract({ address: fund, abi: FUND_ABI, functionName: 'getTradeLimit', args: [vaultOwner, tokenIn] }) as bigint;
+        if (amountIn > tradeLimit) {
+          const limitEth = Number(tradeLimit) / 1e18;
+          const wantEth = Number(amountIn) / 1e18;
+          throw new Error(`Trade limit too low. Limit: ${limitEth.toFixed(4)} WETH, Trade amount: ${wantEth.toFixed(4)} WETH. Increase it in the UI Settings tab.`);
+        }
+
+        const vaultBal = await client.readContract({ address: fund, abi: FUND_ABI, functionName: 'realBalance', args: [vaultOwner, tokenIn] }) as bigint;
+        if (vaultBal < amountIn) {
+          const balEth = Number(vaultBal) / 1e18;
+          const wantEth = Number(amountIn) / 1e18;
+          throw new Error(`Insufficient vault balance. Vault has: ${balEth.toFixed(4)} WETH, needs: ${wantEth.toFixed(4)} WETH. Deposit via the UI.`);
+        }
+
+        console.log(`[executor] Drawing down ${Number(amountIn) / 1e18} WETH from SwarmFund vault...`);
         const ddTx = await walletClient.writeContract({
           address: fund, abi: FUND_ABI, functionName: 'drawdown', args: [vaultOwner, tokenIn, amountIn]
         });
-        await sepoliaClient.waitForTransactionReceipt({ hash: ddTx });
+        await client.waitForTransactionReceipt({ hash: ddTx });
+        drawnDown = true;
+        console.log(`[executor] Drawdown confirmed`);
       }
 
       // 2. Swap on Uniswap
-      const { getQuote } = await import('../lib/uniswap.js');
       const quote = await getQuote(tokenIn, tokenOut, amountIn, config.poolFee, 'sepolia');
       const amountOutMinimum = applySlippage(quote.amountOut, decision.maxSlippage);
 
-      const txHash = await executeSwap(tokenIn, tokenOut, amountIn, amountOutMinimum);
-      const receipt = await sepoliaClient.waitForTransactionReceipt({ hash: txHash });
-      const status: TradeStatus = receipt.status === 'success' ? 'confirmed' : 'failed';
+      swapTxHash = await executeSwap(tokenIn, tokenOut, amountIn, amountOutMinimum);
+      const receipt = await client.waitForTransactionReceipt({ hash: swapTxHash });
+      swapStatus = receipt.status === 'success' ? 'confirmed' : 'failed';
 
       // 3. Return Funds to SwarmFund
-      let amountOut = 0n;
-      if (status === 'confirmed' && fund) {
-        // Find how much tokenOut we received (balance of tokenOut)
-        amountOut = await sepoliaClient.readContract({
+      if (swapStatus === 'confirmed' && fund) {
+        amountOut = await client.readContract({
           address: tokenOut, abi: ERC20_ABI, functionName: 'balanceOf', args: [account.address]
         }) as bigint;
 
         console.log(`[executor] Returning ${amountOut} to SwarmFund...`);
-        // Approve SwarmFund to take tokenOut
         const approveTx = await walletClient.writeContract({
           address: tokenOut, abi: ERC20_ABI, functionName: 'approve', args: [fund, amountOut]
         });
-        await sepoliaClient.waitForTransactionReceipt({ hash: approveTx });
+        await client.waitForTransactionReceipt({ hash: approveTx });
 
-        // returnFunds(user, tokenReturned, amountReturned, tokenCleared, amountCleared)
         const returnTx = await walletClient.writeContract({
           address: fund, abi: FUND_ABI, functionName: 'returnFunds',
           args: [vaultOwner, tokenOut, amountOut, tokenIn, amountIn],
         });
-        await sepoliaClient.waitForTransactionReceipt({ hash: returnTx });
+        await client.waitForTransactionReceipt({ hash: returnTx });
       }
 
-      if (status === 'confirmed') this.totalSuccess++;
+      // CRITICAL: If swap failed but drawdown happened, return the drawn-down WETH
+      if (swapStatus === 'failed' && drawnDown && fund) {
+        const wethBal = await client.readContract({
+          address: tokenIn, abi: ERC20_ABI, functionName: 'balanceOf', args: [account.address]
+        }) as bigint;
+        if (wethBal > 0n) {
+          console.log(`[executor] Swap failed -- returning ${wethBal} drawn-down WETH to vault...`);
+          const approveTx = await walletClient.writeContract({
+            address: tokenIn, abi: ERC20_ABI, functionName: 'approve', args: [fund, wethBal]
+          });
+          await client.waitForTransactionReceipt({ hash: approveTx });
+
+          const returnTx = await walletClient.writeContract({
+            address: fund, abi: FUND_ABI, functionName: 'returnFunds',
+            args: [vaultOwner, tokenIn, wethBal, tokenIn, wethBal],
+          });
+          await client.waitForTransactionReceipt({ hash: returnTx });
+          console.log(`[executor] Drawn-down WETH returned to vault`);
+        }
+      }
+
+      if (swapStatus === 'confirmed') this.totalSuccess++;
       else this.totalFailed++;
 
       const result: TradeResult = {
         ...base,
-        status,
-        txHash,
+        status: swapStatus,
+        txHash: swapTxHash,
         amountOut,
-        gasUsed: receipt.gasUsed,
-        blockNumber: receipt.blockNumber ? Number(receipt.blockNumber) : undefined,
+        gasUsed: receipt?.gasUsed,
+        blockNumber: receipt?.blockNumber ? Number(receipt.blockNumber) : undefined,
       };
-      console.log(`[executor] ${status === 'confirmed' ? '[OK]' : '[X]'} Trade ${status}: ${txHash}`);
+      console.log(`[executor] ${swapStatus === 'confirmed' ? '[OK]' : '[X]'} Trade ${swapStatus}: ${swapTxHash}`);
       return result;
     } catch (err) {
       this.totalFailed++;
       const error = err instanceof Error ? err.message : String(err);
+
+      // CRITICAL: If error occurred after drawdown, attempt to return funds
+      if (drawnDown && fund) {
+        try {
+          const wethBal = await client.readContract({
+            address: tokenIn, abi: ERC20_ABI, functionName: 'balanceOf', args: [account.address]
+          }) as bigint;
+          const usdcBal = await client.readContract({
+            address: tokenOut, abi: ERC20_ABI, functionName: 'balanceOf', args: [account.address]
+          }) as bigint;
+
+          const returnToken = usdcBal > 0n ? tokenOut : tokenIn;
+          const returnAmount = usdcBal > 0n ? usdcBal : wethBal;
+
+          if (returnAmount > 0n) {
+            console.log(`[executor] Error after drawdown -- returning ${returnAmount} to vault...`);
+            const approveTx = await walletClient.writeContract({
+              address: returnToken, abi: ERC20_ABI, functionName: 'approve', args: [fund, returnAmount]
+            });
+            await client.waitForTransactionReceipt({ hash: approveTx });
+
+            const returnTx = await walletClient.writeContract({
+              address: fund, abi: FUND_ABI, functionName: 'returnFunds',
+              args: [vaultOwner, returnToken, returnAmount, tokenIn, amountIn],
+            });
+            await client.waitForTransactionReceipt({ hash: returnTx });
+            console.log(`[executor] Funds returned to vault after error`);
+          }
+        } catch (returnErr) {
+          console.error(`[executor] FAILED to return funds after error:`, returnErr);
+        }
+      }
+
       console.error(`[executor] Trade failed:`, error);
       return { ...base, status: 'failed', error };
     }

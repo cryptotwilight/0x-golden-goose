@@ -54,8 +54,8 @@ export const UNISWAP = {
     factory:      '0x1F98431c8aD98523631AE4a59f267346ea31F984' as `0x${string}`,
   },
   sepolia: {
-    quoterV2:     '0xEd1f6473345F45b75833fd55D5ADbEd9Bae0344' as `0x${string}`,
-    swapRouter02: '0x3bFA4769FB09eefC5a80d6E87c3B9C650f7Ae48' as `0x${string}`,
+    quoterV2:     '0x0Ed1f6473345F45b75833fd55D5ADbEd9Bae0344' as `0x${string}`,
+    swapRouter02: '0x03bFA4769FB09eefC5a80d6E87c3B9C650f7Ae48' as `0x${string}`,
     factory:      '0x0227628f3F023bb0B980b67D528571c95c6DaC1' as `0x${string}`,
   },
 } as const;

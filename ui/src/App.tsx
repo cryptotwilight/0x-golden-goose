@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { Search, ShieldAlert, Zap, Server, Settings, TrendingUp, TrendingDown, Minus, Activity, Clock, Blocks } from 'lucide-react';
+import { Search, ShieldAlert, Zap, Server, Settings, TrendingUp, TrendingDown, Minus, Activity, Clock, Blocks, AlertTriangle } from 'lucide-react';
 import MyVault from './components/MyVault';
 
 function normalizeApiBase(raw: string): string {
@@ -24,11 +24,17 @@ export default function App() {
   const [data, setData] = useState<any>(null);
   const [isConnected, setIsConnected] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
-  const [tickWindow, setTickWindow] = useState<number>(5);
+
+  // Settings state — synced from server once on first poll, then only written on user submit.
+  // The 1 s poll does NOT overwrite these after initial load (dirty flag).
+  const [tickWindow, setTickWindow] = useState<number>(3);
+  const [buyThresholdPct, setBuyThresholdPct] = useState<number>(0.001);
+  const [sellThresholdPct, setSellThresholdPct] = useState<number>(0.001);
+  const [settingsDirty, setSettingsDirty] = useState(false);
+
   const [isUpdatingTick, setIsUpdatingTick] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
-  const [buyThresholdPct, setBuyThresholdPct] = useState<number>(1.5);
-  const [sellThresholdPct, setSellThresholdPct] = useState<number>(1.5);
+  const [updateStatus, setUpdateStatus] = useState<'idle' | 'ok' | 'error'>('idle');
 
   // Tick-window recommender
   const [targetMoveCents, setTargetMoveCents] = useState<number>(10); // $0.10 default
@@ -60,15 +66,21 @@ export default function App() {
         setData(json);
         setIsConnected(true);
         setFetchError(null);
-        // Only set initial tick window if we haven't modified it locally
-        if (json.scout?.tickWindowSize && tickWindow === 5 && !isUpdatingTick) {
-          setTickWindow(json.scout.tickWindowSize);
-        }
-        if (typeof json.scout?.buyThresholdPct === 'number' && Number.isFinite(json.scout.buyThresholdPct)) {
-          setBuyThresholdPct(json.scout.buyThresholdPct);
-        }
-        if (typeof json.scout?.sellThresholdPct === 'number' && Number.isFinite(json.scout.sellThresholdPct)) {
-          setSellThresholdPct(json.scout.sellThresholdPct);
+
+        // Sync settings from server ONLY on the very first successful poll.
+        // After that the poll must NOT overwrite local edits (dirty flag).
+        if (!settingsDirty) {
+          if (json.scout?.tickWindowSize && Number.isFinite(json.scout.tickWindowSize)) {
+            setTickWindow(json.scout.tickWindowSize);
+          }
+          if (typeof json.scout?.buyThresholdPct === 'number' && Number.isFinite(json.scout.buyThresholdPct)) {
+            setBuyThresholdPct(json.scout.buyThresholdPct);
+          }
+          if (typeof json.scout?.sellThresholdPct === 'number' && Number.isFinite(json.scout.sellThresholdPct)) {
+            setSellThresholdPct(json.scout.sellThresholdPct);
+          }
+          // Mark dirty after first sync so subsequent polls don't clobber local state.
+          setSettingsDirty(true);
         }
       } catch (error) {
         setIsConnected(false);
@@ -86,10 +98,11 @@ export default function App() {
     const base = normalizeApiBase(apiUrl);
     if (!base) return;
     setIsUpdatingTick(true);
+    setUpdateStatus('idle');
     try {
-      await fetch(`${base}/api/settings`, {
+      const res = await fetch(`${base}/api/settings`, {
         method: 'POST',
-        headers: { 
+        headers: {
           'Content-Type': 'application/json',
           'ngrok-skip-browser-warning': 'true'
         },
@@ -99,8 +112,16 @@ export default function App() {
           sellThresholdPct,
         })
       });
-    } catch(e) {}
-    setTimeout(() => setIsUpdatingTick(false), 1000);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setUpdateStatus('ok');
+    } catch(e) {
+      setUpdateStatus('error');
+    } finally {
+      setTimeout(() => {
+        setIsUpdatingTick(false);
+        setUpdateStatus('idle');
+      }, 2000);
+    }
   };
 
   const computeTickRecommendation = () => {
@@ -287,84 +308,98 @@ export default function App() {
             background: 'rgba(0,0,0,0.28)',
             border: '1px solid rgba(255,255,255,0.08)',
             borderRadius: '16px',
-            padding: '1rem 1.25rem',
+            padding: '1.25rem',
           }}
         >
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '1rem', flexWrap: 'wrap' }}>
-            <div style={{ minWidth: '280px' }}>
-              <div style={{ fontWeight: 700, marginBottom: '0.25rem' }}>Swarm Settings</div>
-              <div style={{ color: '#94a3b8', fontSize: '0.85rem' }}>
-                Tick window controls the rolling baseline used for signal detection. Smaller windows react faster (more trading).
-              </div>
-            </div>
+          <div style={{ fontWeight: 700, marginBottom: '0.25rem', fontSize: '1rem' }}>Swarm Settings</div>
+          <div style={{ color: '#94a3b8', fontSize: '0.85rem', marginBottom: '1.25rem' }}>
+            Adjust the tick window and price thresholds to control signal sensitivity. Smaller windows and lower thresholds react faster and trigger more trades.
+          </div>
 
+          {/* ── Tick Window ─────────────────────────────────────────────── */}
+          <div style={{ marginBottom: '1.25rem' }}>
+            <div style={{ fontWeight: 600, marginBottom: '0.5rem', fontSize: '0.9rem' }}>Tick Window</div>
+            <div style={{ color: '#94a3b8', fontSize: '0.82rem', marginBottom: '0.75rem' }}>
+              Number of recent price ticks used for the rolling average baseline.
+            </div>
             <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-end', flexWrap: 'wrap' }}>
               <div>
-                <div style={{ color: '#94a3b8', fontSize: '0.8rem', marginBottom: '0.25rem' }}>Tick window</div>
+                <div style={{ color: '#94a3b8', fontSize: '0.78rem', marginBottom: '0.25rem' }}>Window size</div>
                 <input
                   type="number"
                   value={tickWindow}
-                  onChange={(e) => setTickWindow(parseInt(e.target.value) || 0)}
+                  onChange={(e) => { setTickWindow(parseInt(e.target.value) || 0); setSettingsDirty(true); }}
                   min="2"
                   max="50"
                   style={{ width: '90px', textAlign: 'center' }}
                 />
               </div>
-              <button
-                onClick={submitTickWindow}
-                disabled={isUpdatingTick}
-                style={{
-                  background: 'rgba(250, 204, 21, 0.2)',
-                  color: '#facc15',
-                  border: '1px solid rgba(250, 204, 21, 0.3)',
-                  padding: '8px 14px',
-                  borderRadius: '10px',
-                  cursor: 'pointer',
-                  fontSize: '0.85rem',
-                  fontWeight: 700,
-                  opacity: isUpdatingTick ? 0.7 : 1,
-                }}
-              >
-                {isUpdatingTick ? 'Updating…' : 'Update'}
-              </button>
             </div>
           </div>
 
-          <div style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
-            <div style={{ fontWeight: 700, marginBottom: '0.5rem' }}>Tick setting recommender</div>
-            <div style={{ color: '#94a3b8', fontSize: '0.85rem', marginBottom: '0.75rem' }}>
-              Enter the price move you care about (in cents). We’ll analyze recent ticks and suggest a tick window where any smaller window should be sensitive enough to trade more often.
-            </div>
-            <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-end', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
-              <div>
-                <div style={{ color: '#94a3b8', fontSize: '0.8rem', marginBottom: '0.25rem' }}>BUY threshold (%)</div>
-                <input
-                  type="number"
-                  value={buyThresholdPct}
-                  onChange={(e) => setBuyThresholdPct(parseFloat(e.target.value) || 0)}
-                  min="0"
-                  step="0.0001"
-                  style={{ width: '140px', textAlign: 'center' }}
-                />
-              </div>
-              <div>
-                <div style={{ color: '#94a3b8', fontSize: '0.8rem', marginBottom: '0.25rem' }}>SELL threshold (%)</div>
-                <input
-                  type="number"
-                  value={sellThresholdPct}
-                  onChange={(e) => setSellThresholdPct(parseFloat(e.target.value) || 0)}
-                  min="0"
-                  step="0.0001"
-                  style={{ width: '140px', textAlign: 'center' }}
-                />
-              </div>
-              <div style={{ color: '#94a3b8', fontSize: '0.8rem', marginBottom: '0.1rem' }}>
-                Included when you click <strong>Update</strong> above.
-              </div>
+          {/* ── Price Thresholds ────────────────────────────────────────── */}
+          <div style={{ marginBottom: '1.25rem', paddingTop: '1rem', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+            <div style={{ fontWeight: 600, marginBottom: '0.5rem', fontSize: '0.9rem' }}>Price Thresholds</div>
+            <div style={{ color: '#94a3b8', fontSize: '0.82rem', marginBottom: '0.75rem' }}>
+              Minimum price deviation from the rolling average to emit a BUY or SELL signal.
             </div>
             <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-end', flexWrap: 'wrap' }}>
               <div>
-                <div style={{ color: '#94a3b8', fontSize: '0.8rem', marginBottom: '0.25rem' }}>Target move (¢)</div>
+                <div style={{ color: '#94a3b8', fontSize: '0.78rem', marginBottom: '0.25rem' }}>BUY threshold (%)</div>
+                <input
+                  type="number"
+                  value={buyThresholdPct}
+                  onChange={(e) => { setBuyThresholdPct(parseFloat(e.target.value) || 0); setSettingsDirty(true); }}
+                  min="0"
+                  step="0.01"
+                  style={{ width: '140px', textAlign: 'center' }}
+                />
+              </div>
+              <div>
+                <div style={{ color: '#94a3b8', fontSize: '0.78rem', marginBottom: '0.25rem' }}>SELL threshold (%)</div>
+                <input
+                  type="number"
+                  value={sellThresholdPct}
+                  onChange={(e) => { setSellThresholdPct(parseFloat(e.target.value) || 0); setSettingsDirty(true); }}
+                  min="0"
+                  step="0.01"
+                  style={{ width: '140px', textAlign: 'center' }}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* ── Update Button ───────────────────────────────────────────── */}
+          <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', paddingTop: '1rem', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+            <button
+              onClick={submitTickWindow}
+              disabled={isUpdatingTick}
+              style={{
+                background: updateStatus === 'ok' ? 'rgba(16,185,129,0.2)' : updateStatus === 'error' ? 'rgba(244,63,94,0.2)' : 'rgba(250,204,21,0.2)',
+                color: updateStatus === 'ok' ? '#10b981' : updateStatus === 'error' ? '#f43f5e' : '#facc15',
+                border: `1px solid ${updateStatus === 'ok' ? 'rgba(16,185,129,0.3)' : updateStatus === 'error' ? 'rgba(244,63,94,0.3)' : 'rgba(250,204,21,0.3)'}`,
+                padding: '8px 20px',
+                borderRadius: '10px',
+                cursor: 'pointer',
+                fontSize: '0.85rem',
+                fontWeight: 700,
+                opacity: isUpdatingTick ? 0.7 : 1,
+                transition: 'all 0.2s',
+              }}
+            >
+              {isUpdatingTick ? 'Updating…' : updateStatus === 'ok' ? '✓ Updated' : updateStatus === 'error' ? '✗ Failed' : 'Update'}
+            </button>
+          </div>
+
+          {/* ── Tick Setting Recommender ────────────────────────────────── */}
+          <div style={{ marginTop: '1.25rem', paddingTop: '1rem', borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+            <div style={{ fontWeight: 600, marginBottom: '0.5rem', fontSize: '0.9rem' }}>Tick Setting Recommender</div>
+            <div style={{ color: '#94a3b8', fontSize: '0.82rem', marginBottom: '0.75rem' }}>
+              Enter a target price move in cents. We'll analyze recent ticks and suggest a window size sensitive enough to catch moves of that size.
+            </div>
+            <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+              <div>
+                <div style={{ color: '#94a3b8', fontSize: '0.78rem', marginBottom: '0.25rem' }}>Target move (¢)</div>
                 <input
                   type="number"
                   value={targetMoveCents}
@@ -391,7 +426,7 @@ export default function App() {
               </button>
               {recommendedTickWindow != null && (
                 <button
-                  onClick={() => { setTickWindow(recommendedTickWindow); }}
+                  onClick={() => { setTickWindow(recommendedTickWindow); setSettingsDirty(true); }}
                   style={{
                     background: 'rgba(255,255,255,0.04)',
                     color: '#e2e8f0',
@@ -659,7 +694,7 @@ export default function App() {
                   {data.executor.latestResult ? (
                     data.executor.latestResult.status === 'confirmed'
                       ? <span className="text-green">✅ {data.executor.latestResult.txHash?.slice(0, 24)}...</span>
-                      : <span className="text-red">❌ {data.executor.latestResult.error?.slice(0, 30) ?? 'Failed'}</span>
+                      : <span className="text-red" title={data.executor.latestResult.error}>❌ {data.executor.latestResult.error ?? 'Failed'}</span>
                   ) : (
                     <span className="text-gray">No trades yet...</span>
                   )}
@@ -669,13 +704,75 @@ export default function App() {
           </div>
 
           {/* SwarmFund — My Vault (wallet-connected) */}
-          <MyVault />
+          <MyVault
+            swarmSettings={{ tickWindow, buyThresholdPct, sellThresholdPct }}
+            onSwarmSettingsChange={(s) => {
+              if (s.tickWindow !== undefined) setTickWindow(s.tickWindow);
+              if (s.buyThresholdPct !== undefined) { setBuyThresholdPct(s.buyThresholdPct); setSettingsDirty(true); }
+              if (s.sellThresholdPct !== undefined) { setSellThresholdPct(s.sellThresholdPct); setSettingsDirty(true); }
+            }}
+            onUpdateSettings={submitTickWindow}
+            updateStatus={updateStatus}
+            scoutData={{
+              prices: data?.scout?.recentPrices ?? [],
+              latestPrice: data?.scout?.latestPrice ?? 0,
+              scoutPollMs: data?.scout?.scoutPollMs ?? 3000,
+            }}
+          />
+
+          {/* Error Log Section */}
+          {data?.errors && data.errors.length > 0 && (
+            <div style={{ marginTop: '2rem' }}>
+              <h2 style={{ fontSize: '1.25rem', display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' }}>
+                <AlertTriangle size={20} className="text-red" /> Recent Errors
+                <span style={{ fontSize: '0.85rem', color: '#64748b', fontWeight: 400 }}>({data.errors.length})</span>
+              </h2>
+              <div style={{ background: 'var(--panel-bg)', borderRadius: '16px', border: '1px solid rgba(244,63,94,0.15)', overflow: 'hidden', maxHeight: '320px', overflowY: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+                  <thead>
+                    <tr style={{ background: 'rgba(244,63,94,0.08)', borderBottom: '1px solid rgba(244,63,94,0.1)' }}>
+                      <th style={{ padding: '0.75rem 1rem', color: '#f43f5e', fontWeight: 500, fontSize: '0.85rem' }}>Time</th>
+                      <th style={{ padding: '0.75rem 1rem', color: '#f43f5e', fontWeight: 500, fontSize: '0.85rem' }}>Agent</th>
+                      <th style={{ padding: '0.75rem 1rem', color: '#f43f5e', fontWeight: 500, fontSize: '0.85rem' }}>Error</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[...data.errors].reverse().map((err: any, i: number) => (
+                      <tr key={i} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
+                        <td style={{ padding: '0.6rem 1rem', fontFamily: 'monospace', fontSize: '0.8rem', color: '#94a3b8', whiteSpace: 'nowrap' }}>
+                          {new Date(err.timestamp).toLocaleTimeString()}
+                        </td>
+                        <td style={{ padding: '0.6rem 1rem' }}>
+                          <span style={{
+                            background: err.agent === 'executor' ? 'rgba(250,204,21,0.1)' : err.agent === 'scout' ? 'rgba(6,182,212,0.1)' : 'rgba(139,92,246,0.1)',
+                            color: err.agent === 'executor' ? '#facc15' : err.agent === 'scout' ? '#06b6d4' : '#8b5cf6',
+                            padding: '2px 8px',
+                            borderRadius: '4px',
+                            fontSize: '0.75rem',
+                            fontFamily: 'monospace',
+                          }}>
+                            {err.agent}
+                          </span>
+                        </td>
+                        <td style={{ padding: '0.6rem 1rem', fontFamily: 'monospace', fontSize: '0.8rem', color: '#f87171', wordBreak: 'break-word' }}>
+                          {err.message}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
 
           {/* P&L and Trade History Section */}
           <div style={{ marginTop: '2rem' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: '1rem' }}>
               <h2 style={{ fontSize: '1.25rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                 <Activity size={20} className="text-cyan" /> Trade History
+                <span style={{ fontSize: '0.85rem', color: '#64748b', fontWeight: 400 }}>
+                  ({data.executor.totalTrades} total · <span className="text-green">{data.executor.totalSuccess}</span> success · <span className="text-red">{data.executor.totalFailed}</span> failed)
+                </span>
               </h2>
               
               <div style={{ background: 'rgba(0,0,0,0.3)', padding: '0.75rem 1.5rem', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.05)', display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
@@ -698,15 +795,14 @@ export default function App() {
                       <th style={{ padding: '1rem', color: 'var(--text-muted)', fontWeight: 500 }}>Time</th>
                       <th style={{ padding: '1rem', color: 'var(--text-muted)', fontWeight: 500 }}>Direction</th>
                       <th style={{ padding: '1rem', color: 'var(--text-muted)', fontWeight: 500 }}>Exec Price</th>
-                      <th style={{ padding: '1rem', color: 'var(--text-muted)', fontWeight: 500 }}>Current Price</th>
-                      <th style={{ padding: '1rem', color: 'var(--text-muted)', fontWeight: 500 }}>Unrealized P&L</th>
                       <th style={{ padding: '1rem', color: 'var(--text-muted)', fontWeight: 500 }}>Status</th>
+                      <th style={{ padding: '1rem', color: 'var(--text-muted)', fontWeight: 500 }}>Details</th>
                     </tr>
                   </thead>
                   <tbody>
                     {trades.map((t: any, i: number) => (
                       <tr key={i} style={{ borderBottom: '1px solid rgba(255,255,255,0.02)' }}>
-                        <td style={{ padding: '1rem', fontFamily: 'monospace' }}>
+                        <td style={{ padding: '1rem', fontFamily: 'monospace', fontSize: '0.85rem', color: '#94a3b8', whiteSpace: 'nowrap' }}>
                           {new Date(t.timestamp).toLocaleTimeString()}
                         </td>
                         <td style={{ padding: '1rem' }}>
@@ -714,20 +810,23 @@ export default function App() {
                             {t.direction}
                           </span>
                         </td>
-                        <td style={{ padding: '1rem', fontFamily: 'monospace' }}>
+                        <td style={{ padding: '1rem', fontFamily: 'monospace', fontSize: '0.85rem' }}>
                           ${t.executionPrice?.toFixed(2) || '---'}
-                        </td>
-                        <td style={{ padding: '1rem', fontFamily: 'monospace' }}>
-                          ${data.scout.latestPrice?.toFixed(2)}
-                        </td>
-                        <td style={{ padding: '1rem', fontFamily: 'monospace', color: t.pnlPct >= 0 ? '#10b981' : '#f43f5e' }}>
-                          {t.pnlPct > 0 ? '+' : ''}{t.pnlPct.toFixed(2)}%
                         </td>
                         <td style={{ padding: '1rem' }}>
                           {t.status === 'confirmed' ? (
-                            t.isWin ? <span className="text-green">✅ Winning</span> : <span className="text-red">❌ Losing</span>
+                            <span className="text-green">✅ Confirmed</span>
                           ) : (
-                            <span className="text-gray">Failed</span>
+                            <span className="text-red">❌ Failed</span>
+                          )}
+                        </td>
+                        <td style={{ padding: '1rem', fontFamily: 'monospace', fontSize: '0.8rem', wordBreak: 'break-word', maxWidth: '400px' }}>
+                          {t.status === 'confirmed' ? (
+                            <span style={{ color: t.pnlPct >= 0 ? '#10b981' : '#f43f5e' }}>
+                              P&L: {t.pnlPct > 0 ? '+' : ''}{t.pnlPct.toFixed(2)}%
+                            </span>
+                          ) : (
+                            <span className="text-red" title={t.error}>{t.error || 'Unknown error'}</span>
                           )}
                         </td>
                       </tr>
